@@ -1,0 +1,25 @@
+
+# Entornos virtuales y dependencias
+.env
+.venv
+virtualenv/
+venv/
+
+# Archivos de caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Archivos de resultados generados
+results/
+*.html
+*.json
+*.log
+
+# Excepciones: Mantener archivos de ejemplo o base si existen
+!results/.gitkeep
+!data/example_data.csv
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
