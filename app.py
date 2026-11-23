@@ -177,22 +177,14 @@ def _load_current_config() -> Dict[str, Any]:
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Sirve la interfaz principal del mapa 3D con el side panel integrado."""
+    if LATEST_MAP_PATH.exists():
+        html_text = LATEST_MAP_PATH.read_text(encoding="utf-8")
+        if "buildRoutePopupHtml" in html_text and "vrp-points-source" in html_text:
+            return HTMLResponse(content=html_text)
+
     locations = _load_current_csv_locations()
     config = _load_current_config()
-
-    # Si ya existe una solución previa, cargarla como estado inicial del mapa
-    existing_routes = []
     existing_report = None
-    if MATRICES_JSON_PATH.exists():
-        try:
-            data = create_data_model(str(MATRICES_JSON_PATH))
-            if data:
-                manager, routing, solution = solve_vrp(data)
-                if solution:
-                    existing_routes = extract_routes_from_solution(data, manager, routing, solution) or []
-        except Exception as e:
-            logger.warning(f"No se pudo cargar solución inicial previa: {e}")
-
     if LATEST_REPORT_PATH.exists():
         try:
             with LATEST_REPORT_PATH.open("r", encoding="utf-8") as f:
@@ -211,7 +203,7 @@ async def index():
     html_path = LATEST_MAP_PATH
     html_path.parent.mkdir(parents=True, exist_ok=True)
     create_map_visualization(
-        existing_routes,
+        [],
         data_stub,
         output_file=str(html_path),
         initial_locations=locations,
@@ -494,4 +486,4 @@ async def solve_endpoint(req: SolveRequest):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)

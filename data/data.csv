@@ -1,3 +1,8 @@
 ID,ID_Viaje,Tipo_Servicio,Nombre,Latitud,Longitud,Horario_Inicio,Horario_Fin,Demanda
-0,0,,Depósito,20.967073,-89.623739,07:00,23:00,0
-1,1,Entrega,SYD,20.912135,-89.702568,08:00,23:00,5
+0,0,,CEDIS Mérida Centro,20.967073,-89.623739,07:00,23:00,0
+1,1,Entrega,Sucursal Caucel,20.998512,-89.70142,08:00,18:00,4
+2,2,Entrega,Plaza Altabrisa,21.01784,-89.58431,09:00,21:00,5
+3,3,Entrega,Parque Industrial Umán,20.912135,-89.702568,08:00,20:00,4
+4,4,Entrega,Montejo Norte,21.02845,-89.62489,08:30,19:00,3
+5,5,Entrega,Kanasín Centro,20.93612,-89.56321,10:00,22:00,4
+6,6,Entrega,Aeropuerto Sur,20.9372,-89.6438,08:00,21:00,3

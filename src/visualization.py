@@ -10,21 +10,18 @@ DEFAULT_OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "http://localhost:5000")
 FALLBACK_OSRM_BASE_URL = "https://router.project-osrm.org"
 
 ROUTE_COLORS = [
-    "#FF4757",  # Rojo vibrante
-    "#3742FA",  # Azul intenso
-    "#2ED573",  # Verde esmeralda
-    "#FFA502",  # Naranja cálido
-    "#FF6348",  # Coral
-    "#5F27CD",  # Violeta eléctrico
-    "#00D2D3",  # Turquesa brillante
-    "#FFD700",  # Amarillo dorado
-    "#FF69B4",  # Rosa neón
-    "#1E90FF",  # Azul dodger
-    "#32CD32",  # Verde lima
-    "#8A2BE2",  # Azul violeta
-    "#FF8C00",  # Naranja oscuro
-    "#00FA9A",  # Verde primavera
-    "#8B4513",  # Marrón cuero
+    "#2563EB",  # Azul real
+    "#EA580C",  # Naranja entrega
+    "#16A34A",  # Verde esmeralda
+    "#9333EA",  # Violeta
+    "#E11D48",  # Rojo carmesí
+    "#0891B2",  # Cian oscuro
+    "#D97706",  # Ámbar
+    "#4F46E5",  # Índigo
+    "#059669",  # Verde botella
+    "#DB2777",  # Rosa intenso
+    "#7C3AED",  # Púrpura
+    "#0284C7",  # Azul cielo
 ]
 
 
@@ -76,7 +73,6 @@ class OSRMClient:
         self._auto_start_attempted = False
 
     def _ensure_local_osrm_running(self):
-        """Si apunta a localhost y OSRM no responde, ejecuta setup_osrm.ps1 si auto_start_docker=True."""
         if not self.auto_start_docker:
             return False
         if self._auto_start_attempted or ("localhost" not in self.base_url and "127.0.0.1" not in self.base_url):
@@ -96,12 +92,6 @@ class OSRMClient:
         return res.returncode == 0
 
     def fetch_full_route(self, stops_coords):
-        """
-        Obtiene la geometría completa siguiendo las calles para todas las paradas de un vehículo
-        en una sola llamada a /route/v1/{profile}/ en OSRM.
-        stops_coords: lista de [lat, lon] en orden de visita.
-        Retorna lista de [lat, lon].
-        """
         if not stops_coords or len(stops_coords) < 2:
             return stops_coords or []
 
@@ -232,6 +222,10 @@ def build_map_payload(routes, data, osrm_base_url=None):
     }
 
     osrm_client = OSRMClient(base_url=osrm_base_url, max_workers=8, timeout=10, max_retries=1)
+    distance_matrix = data.get("distance_matrix", [])
+    vehicle_cap = data.get("vehicle_capacity", 10)
+    if isinstance(vehicle_cap, list):
+        vehicle_cap = vehicle_cap[0] if vehicle_cap else 10
 
     routes_payload = []
     depot_return_required = data.get("depot_return_required", True)
@@ -246,6 +240,16 @@ def build_map_payload(routes, data, osrm_base_url=None):
         geojson_coords = [[float(c[1]), float(c[0])] for c in route_latlon]
 
         total_time_str = f"{route['total_time'] // 60:02d}:{route['total_time'] % 60:02d}"
+
+        route_dist_km = 0.0
+        if distance_matrix:
+            for k in range(len(route["stops"]) - 1):
+                fn = route["stops"][k].get("node_index", 0)
+                tn = route["stops"][k + 1].get("node_index", 0)
+                try:
+                    route_dist_km += float(distance_matrix[fn][tn])
+                except (IndexError, TypeError, ValueError):
+                    pass
 
         stops_payload = []
         for i, stop in enumerate(route["stops"]):
@@ -282,7 +286,10 @@ def build_map_payload(routes, data, osrm_base_url=None):
                 "display_id": display_id,
                 "color": color,
                 "total_time_str": total_time_str,
+                "total_time_min": route["total_time"],
+                "total_distance_km": round(route_dist_km, 2),
                 "total_load": route["total_load"],
+                "vehicle_capacity": vehicle_cap,
                 "coordinates": geojson_coords,
                 "stops": stops_payload,
             }
@@ -347,8 +354,8 @@ def create_map_visualization(
 ):
     """
     Crea el mapa interactivo en 3D (WebGL con MapLibre GL JS + OpenFreeMap Vector Tiles)
-    con un Side Panel simple e integrado para gestionar puntos (clic en el mapa o importar CSV),
-    configurar parámetros del VRP y calcular/visualizar rutas sobre las calles reales.
+    con un Side Panel limpio e intuitivo para colocar/editar puntos, importar CSV,
+    ajustar opciones de flota y visualizar rutas 3D y sus itinerarios.
     """
     map_payload = build_map_payload(routes or [], data or {}, osrm_base_url=osrm_base_url)
     locations_list = _normalize_initial_locations(data or {}, initial_locations)
@@ -377,22 +384,30 @@ def create_map_visualization(
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Optimizador de Rutas VRP - Mapa 3D</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <style>
     :root {{
       --panel-bg: rgba(255, 255, 255, 0.96);
-      --panel-border: rgba(0, 0, 0, 0.08);
-      --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+      --panel-border: rgba(15, 23, 42, 0.09);
+      --panel-shadow: 0 10px 30px rgba(15, 23, 42, 0.14);
       --primary: #2563eb;
       --primary-hover: #1d4ed8;
-      --text-main: #1e293b;
+      --primary-soft: #eff6ff;
+      --text-main: #0f172a;
       --text-muted: #64748b;
       --border-light: #e2e8f0;
       --surface-muted: #f8fafc;
-      --danger: #ef4444;
+      --danger: #dc2626;
+      --danger-soft: #fef2f2;
       --success: #16a34a;
+      --success-soft: #f0fdf4;
+      --warning: #d97706;
+      --warning-soft: #fffbeb;
     }}
 
     * {{
@@ -405,8 +420,9 @@ def create_map_visualization(
       width: 100%;
       height: 100%;
       overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Arial, sans-serif;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       color: var(--text-main);
+      -webkit-font-smoothing: antialiased;
     }}
 
     #map {{
@@ -414,10 +430,27 @@ def create_map_visualization(
       inset: 0;
       width: 100%;
       height: 100%;
+      background: #e2e8f0;
     }}
 
     #map.crosshair-mode canvas {{
       cursor: crosshair !important;
+    }}
+
+    /* Scrollbars limpias */
+    ::-webkit-scrollbar {{
+      width: 5px;
+      height: 5px;
+    }}
+    ::-webkit-scrollbar-track {{
+      background: transparent;
+    }}
+    ::-webkit-scrollbar-thumb {{
+      background: #cbd5e1;
+      border-radius: 999px;
+    }}
+    ::-webkit-scrollbar-thumb:hover {{
+      background: #94a3b8;
     }}
 
     /* ================= SIDE PANEL IZQUIERDO ================= */
@@ -425,17 +458,17 @@ def create_map_visualization(
       position: fixed;
       top: 14px;
       left: 14px;
-      width: 365px;
+      width: 375px;
       max-width: calc(100vw - 28px);
       max-height: calc(100vh - 28px);
       background: var(--panel-bg);
-      border-radius: 12px;
+      border-radius: 14px;
       box-shadow: var(--panel-shadow);
       border: 1px solid var(--panel-border);
       z-index: 10001;
       display: flex;
       flex-direction: column;
-      backdrop-filter: blur(8px);
+      backdrop-filter: blur(10px);
       transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease;
     }}
 
@@ -443,6 +476,11 @@ def create_map_visualization(
       transform: translateX(calc(-100% - 24px));
       opacity: 0;
       pointer-events: none;
+    }}
+
+    .vrp-side-panel.drag-over {{
+      border: 2px dashed var(--primary);
+      background: rgba(239, 246, 255, 0.98);
     }}
 
     .vrp-side-toggle {{
@@ -455,24 +493,25 @@ def create_map_visualization(
       border: 1px solid var(--panel-border);
       color: var(--text-main);
       padding: 10px 14px;
-      border-radius: 10px;
+      border-radius: 11px;
       box-shadow: var(--panel-shadow);
       font-size: 13px;
       font-weight: 600;
       display: none;
       align-items: center;
       gap: 8px;
-      transition: background 150ms ease;
+      transition: all 150ms ease;
     }}
     .vrp-side-toggle:hover {{
-      background: #f1f5f9;
+      background: #f8fafc;
+      transform: translateY(-1px);
     }}
 
     .vrp-panel-header {{
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 14px;
+      padding: 13px 16px;
       border-bottom: 1px solid var(--border-light);
     }}
 
@@ -480,10 +519,22 @@ def create_map_visualization(
       margin: 0;
       font-size: 15px;
       font-weight: 700;
-      color: #111827;
+      color: var(--text-main);
       display: flex;
       align-items: center;
       gap: 8px;
+    }}
+
+    .vrp-title-icon {{
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: var(--primary-soft);
+      color: var(--primary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
     }}
 
     .vrp-icon-btn {{
@@ -491,33 +542,33 @@ def create_map_visualization(
       border: none;
       background: transparent;
       cursor: pointer;
-      font-size: 16px;
+      font-size: 14px;
       color: var(--text-muted);
-      padding: 4px 8px;
-      border-radius: 6px;
+      padding: 5px 8px;
+      border-radius: 7px;
       transition: background 150ms ease, color 150ms ease;
     }}
     .vrp-icon-btn:hover {{
       background: #f1f5f9;
-      color: #0f172a;
+      color: var(--text-main);
     }}
 
-    /* Pestañas simples */
+    /* Pestañas */
     .vrp-tabs {{
       display: grid;
       grid-template-columns: 1fr 1fr;
       padding: 6px 14px 0;
       gap: 6px;
       border-bottom: 1px solid var(--border-light);
-      background: rgba(248, 250, 252, 0.6);
+      background: rgba(248, 250, 252, 0.7);
     }}
 
     .vrp-tab-btn {{
       appearance: none;
       border: none;
       background: transparent;
-      padding: 8px 10px;
-      font-size: 13px;
+      padding: 9px 10px;
+      font-size: 12.5px;
       font-weight: 600;
       color: var(--text-muted);
       cursor: pointer;
@@ -540,8 +591,8 @@ def create_map_visualization(
       background: #e2e8f0;
       color: #334155;
       font-size: 11px;
-      padding: 1px 6px;
-      border-radius: 10px;
+      padding: 1px 7px;
+      border-radius: 999px;
       font-weight: 700;
     }}
     .vrp-tab-btn.active .vrp-badge-count {{
@@ -563,11 +614,11 @@ def create_map_visualization(
       display: block;
     }}
 
-    /* Acciones CSV y Modo Mapa */
+    /* Barra de herramientas CSV */
     .vrp-toolbar {{
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 6px;
       margin-bottom: 10px;
     }}
 
@@ -592,32 +643,67 @@ def create_map_visualization(
       border-color: #cbd5e1;
     }}
 
-    .vrp-btn-map-mode {{
-      width: 100%;
+    /* Botón modo clic en el mapa */
+    .vrp-map-mode-box {{
+      background: var(--surface-muted);
+      border: 1px solid var(--border-light);
+      border-radius: 10px;
+      padding: 8px;
       margin-bottom: 10px;
-      padding: 8px 12px;
-      background: #f0fdf4;
-      border: 1px dashed #86efac;
-      color: #166534;
+      transition: all 150ms ease;
     }}
-    .vrp-btn-map-mode:hover {{
-      background: #dcfce7;
-      border-color: #4ade80;
-    }}
-    .vrp-btn-map-mode.active {{
-      background: #16a34a;
-      border: 1px solid #15803d;
-      color: #ffffff;
-      box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25);
+    .vrp-map-mode-box.active {{
+      background: var(--success-soft);
+      border-color: #86efac;
     }}
 
-    /* Formulario compacto para agregar/editar punto */
+    .vrp-btn-map-mode {{
+      width: 100%;
+      padding: 8px 12px;
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      color: var(--text-main);
+    }}
+    .vrp-btn-map-mode:hover {{
+      background: #f1f5f9;
+    }}
+    .vrp-btn-map-mode.active {{
+      background: var(--success);
+      border-color: #15803d;
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(22, 163, 74, 0.22);
+    }}
+
+    .vrp-quick-defaults {{
+      display: none;
+      grid-template-columns: 1.1fr 0.8fr 1fr;
+      gap: 6px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed #bbf7d0;
+    }}
+    .vrp-map-mode-box.active .vrp-quick-defaults {{
+      display: grid;
+    }}
+
+    /* Acordeón de formulario manual / edición */
+    .vrp-form-toggle-row {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }}
+
     .vrp-form-card {{
       background: var(--surface-muted);
       border: 1px solid var(--border-light);
       border-radius: 10px;
       padding: 10px;
       margin-bottom: 10px;
+      display: none;
+    }}
+    .vrp-form-card.open {{
+      display: block;
     }}
 
     .vrp-form-header {{
@@ -660,16 +746,36 @@ def create_map_visualization(
       width: 100%;
       padding: 6px 8px;
       border: 1px solid #cbd5e1;
-      border-radius: 6px;
+      border-radius: 7px;
       font-size: 12px;
+      font-family: inherit;
       color: var(--text-main);
       background: #ffffff;
       outline: none;
-      transition: border-color 150ms ease;
+      transition: border-color 150ms ease, box-shadow 150ms ease;
     }}
     .vrp-input:focus, .vrp-select:focus {{
       border-color: var(--primary);
-      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+      box-shadow: 0 0 0 2.5px rgba(37, 99, 235, 0.14);
+    }}
+
+    /* Aviso de cambios pendientes */
+    .vrp-dirty-banner {{
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: var(--warning-soft);
+      border: 1px solid #fde68a;
+      color: #92400e;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 11.5px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }}
+    .vrp-dirty-banner.visible {{
+      display: flex;
     }}
 
     /* Lista de puntos */
@@ -677,14 +783,15 @@ def create_map_visualization(
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin: 8px 0 6px;
+      margin: 4px 0 6px;
     }}
 
     .vrp-points-list {{
       display: flex;
       flex-direction: column;
       gap: 6px;
-      max-height: 250px;
+      max-height: calc(100vh - 360px);
+      min-height: 140px;
       overflow-y: auto;
       padding-right: 2px;
     }}
@@ -692,22 +799,26 @@ def create_map_visualization(
     .vrp-point-item {{
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 7px 9px;
+      gap: 9px;
+      padding: 8px 10px;
       background: #ffffff;
       border: 1px solid var(--border-light);
-      border-radius: 8px;
+      border-radius: 9px;
       cursor: pointer;
-      transition: border-color 150ms ease, background 150ms ease;
+      transition: all 150ms ease;
     }}
     .vrp-point-item:hover {{
       border-color: #93c5fd;
       background: #f8fafc;
     }}
+    .vrp-point-item.selected {{
+      border-color: var(--primary);
+      background: var(--primary-soft);
+    }}
 
     .vrp-point-badge {{
-      width: 22px;
-      height: 22px;
+      width: 24px;
+      height: 24px;
       border-radius: 50%;
       display: inline-flex;
       align-items: center;
@@ -717,7 +828,7 @@ def create_map_visualization(
       flex-shrink: 0;
     }}
     .vrp-point-badge.depot {{
-      background: #111827;
+      background: #0f172a;
       color: #ffffff;
     }}
     .vrp-point-badge.entrega {{
@@ -736,12 +847,15 @@ def create_map_visualization(
       min-width: 0;
     }}
     .vrp-point-name {{
-      font-size: 12px;
+      font-size: 12.5px;
       font-weight: 600;
-      color: #0f172a;
+      color: var(--text-main);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }}
     .vrp-point-meta {{
       font-size: 11px;
@@ -749,6 +863,7 @@ def create_map_visualization(
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      margin-top: 1px;
     }}
 
     .vrp-point-actions {{
@@ -760,31 +875,44 @@ def create_map_visualization(
     .vrp-capacity-bar {{
       background: var(--surface-muted);
       border: 1px solid var(--border-light);
-      border-radius: 8px;
-      padding: 8px 10px;
-      margin-top: 8px;
+      border-radius: 9px;
+      padding: 9px 11px;
+      margin-top: 10px;
       font-size: 12px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
     }}
     .vrp-capacity-bar.ok {{
       border-color: #bbf7d0;
-      background: #f0fdf4;
+      background: var(--success-soft);
       color: #166534;
     }}
     .vrp-capacity-bar.warn {{
       border-color: #fecaca;
-      background: #fef2f2;
+      background: var(--danger-soft);
       color: #991b1b;
+    }}
+    .vrp-cap-progress {{
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.08);
+      margin-top: 6px;
+      overflow: hidden;
+    }}
+    .vrp-cap-fill {{
+      height: 100%;
+      background: var(--success);
+      border-radius: 999px;
+      transition: width 200ms ease;
+    }}
+    .vrp-capacity-bar.warn .vrp-cap-fill {{
+      background: var(--danger);
     }}
 
     /* Footer fijo del side panel */
     .vrp-panel-footer {{
       padding: 10px 14px 12px;
       border-top: 1px solid var(--border-light);
-      background: rgba(255, 255, 255, 0.95);
-      border-radius: 0 0 12px 12px;
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 0 0 14px 14px;
     }}
 
     .vrp-btn-solve {{
@@ -801,7 +929,7 @@ def create_map_visualization(
       align-items: center;
       justify-content: center;
       gap: 8px;
-      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.28);
       transition: background 150ms ease, transform 100ms ease;
     }}
     .vrp-btn-solve:hover:not(:disabled) {{
@@ -841,15 +969,15 @@ def create_map_visualization(
       border-radius: 12px;
       box-shadow: var(--panel-shadow);
       border: 1px solid var(--panel-border);
-      padding: 6px 12px;
+      padding: 7px 13px;
       display: flex;
       align-items: center;
       gap: 8px;
-      backdrop-filter: blur(6px);
+      backdrop-filter: blur(8px);
     }}
     .twcvrp-search-bar i {{
-      color: #666;
-      font-size: 14px;
+      color: var(--text-muted);
+      font-size: 13px;
     }}
     .twcvrp-search-input {{
       border: none;
@@ -857,8 +985,9 @@ def create_map_visualization(
       background: transparent;
       width: 100%;
       font-size: 13px;
-      color: #222;
-      padding: 4px 0;
+      font-family: inherit;
+      color: var(--text-main);
+      padding: 2px 0;
     }}
     .twcvrp-search-results {{
       position: absolute;
@@ -867,8 +996,8 @@ def create_map_visualization(
       right: 0;
       background: #fff;
       border-radius: 10px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-      border: 1px solid rgba(0, 0, 0, 0.08);
+      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16);
+      border: 1px solid var(--panel-border);
       max-height: 240px;
       overflow-y: auto;
       display: none;
@@ -876,91 +1005,194 @@ def create_map_visualization(
     .twcvrp-search-item {{
       padding: 8px 12px;
       font-size: 12px;
-      color: #333;
+      color: var(--text-main);
       cursor: pointer;
-      border-bottom: 1px solid #f2f2f2;
+      border-bottom: 1px solid #f1f5f9;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }}
     .twcvrp-search-item:last-child {{ border-bottom: none; }}
-    .twcvrp-search-item:hover {{ background: #f5f7fa; }}
+    .twcvrp-search-item:hover {{ background: #f8fafc; }}
+
+    /* Banner inferior cuando está activo el modo de clic en el mapa */
+    .vrp-map-banner {{
+      position: fixed;
+      bottom: 22px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      z-index: 10000;
+      background: rgba(15, 23, 42, 0.92);
+      color: #ffffff;
+      padding: 9px 16px;
+      border-radius: 999px;
+      font-size: 12.5px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+      backdrop-filter: blur(6px);
+      opacity: 0;
+      pointer-events: none;
+      transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease;
+    }}
+    .vrp-map-banner.visible {{
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+      pointer-events: auto;
+    }}
+    .vrp-map-banner button {{
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    .vrp-map-banner button:hover {{
+      background: rgba(255, 255, 255, 0.25);
+    }}
+
+    /* Toast flotante */
+    .vrp-toast {{
+      position: fixed;
+      top: 64px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-15px);
+      z-index: 10005;
+      background: #0f172a;
+      color: #ffffff;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.22);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 200ms ease;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }}
+    .vrp-toast.show {{
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }}
+    .vrp-toast.error {{
+      background: #dc2626;
+    }}
+    .vrp-toast.success {{
+      background: #15803d;
+    }}
 
     /* ================= PANEL DERECHO DE LEYENDA Y RESULTADOS ================= */
     .twcvrp-legend-panel {{
       position: fixed;
       top: 14px;
-      right: -330px;
-      width: 295px;
+      right: -345px;
+      width: 315px;
       max-height: calc(100vh - 28px);
       overflow-y: auto;
       background: var(--panel-bg);
-      border-radius: 12px;
+      border-radius: 14px;
       box-shadow: var(--panel-shadow);
       border: 1px solid var(--panel-border);
       z-index: 9999;
-      transition: right 260ms ease;
-      backdrop-filter: blur(6px);
+      transition: right 240ms cubic-bezier(0.22, 1, 0.36, 1);
+      backdrop-filter: blur(10px);
     }}
     .twcvrp-legend-panel.open {{ right: 14px; }}
     .twcvrp-legend-header {{
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 14px;
-      border-bottom: 1px solid #eee;
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--border-light);
     }}
-    .twcvrp-legend-title {{ margin: 0; font-size: 14px; font-weight: 700; color: #222; }}
-    .twcvrp-legend-close {{
-      appearance: none;
-      border: none;
-      background: transparent;
+    .twcvrp-legend-title {{ margin: 0; font-size: 14px; font-weight: 700; color: var(--text-main); }}
+    .twcvrp-legend-content {{ padding: 12px 14px; font-size: 13px; color: var(--text-main); }}
+    .twcvrp-divider {{ margin: 10px 0; border: 0; border-top: 1px solid var(--border-light); }}
+    .twcvrp-section-title {{
+      margin: 0 0 8px 0;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }}
+
+    /* Controles de cámara y estilo en el panel derecho */
+    .vrp-cam-grid {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 8px;
+    }}
+
+    /* Tarjetas de ruta por vehículo con acordeón de paradas */
+    .vrp-route-card {{
+      border: 1px solid var(--border-light);
+      border-radius: 9px;
+      background: #ffffff;
+      margin-bottom: 7px;
+      overflow: hidden;
+      transition: border-color 150ms ease;
+    }}
+    .vrp-route-card:hover {{
+      border-color: #cbd5e1;
+    }}
+    .vrp-route-header {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
       cursor: pointer;
-      font-size: 18px;
-      line-height: 1;
-      color: #666;
-      padding: 4px 8px;
-      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
     }}
-    .twcvrp-legend-close:hover {{ background: #f2f2f2; color: #111; }}
-    .twcvrp-legend-content {{ padding: 12px 14px; font-size: 13px; color: #333; }}
-    .twcvrp-item {{ margin: 5px 0; display: flex; align-items: center; gap: 8px; font-size: 12px; }}
-    .twcvrp-divider {{ margin: 10px 0; border: 0; border-top: 1px solid #eee; }}
-    .twcvrp-section-title {{ margin: 0 0 6px 0; font-size: 12px; font-weight: 700; color: #333; text-transform: uppercase; letter-spacing: 0.02em; }}
-    .twcvrp-route-item {{ display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }}
     .twcvrp-dot {{
       width: 12px;
       height: 12px;
       border-radius: 50%;
       display: inline-block;
-      box-shadow: inset 0 0 0 2px #fff, 0 0 0 1px rgba(0,0,0,0.15);
+      box-shadow: inset 0 0 0 2px #fff, 0 0 0 1px rgba(0,0,0,0.18);
       flex-shrink: 0;
     }}
-    .twcvrp-meta {{ margin-left: auto; color: #666; font-size: 11px; }}
-    .twcvrp-route-actions {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }}
-    .twcvrp-eye {{
-      appearance: none;
-      border: none;
-      background: transparent;
-      cursor: pointer;
-      color: #444;
-      padding: 4px 6px;
-      border-radius: 6px;
+    .twcvrp-meta {{
+      margin-left: auto;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 500;
     }}
-    .twcvrp-eye:hover {{ background: #f2f2f2; color: #111; }}
-    .twcvrp-btn-3d {{
-      appearance: none;
-      border: 1px solid #ddd;
-      background: #f8f9fa;
-      cursor: pointer;
-      color: #222;
-      padding: 5px 10px;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 600;
+    .vrp-route-stops-drawer {{
+      display: none;
+      border-top: 1px solid #f1f5f9;
+      background: #f8fafc;
+      padding: 7px 10px;
+      font-size: 11.5px;
     }}
-    .twcvrp-btn-3d:hover {{ background: #eef1f5; }}
-    .twcvrp-hint {{ margin: 0; color: #666; font-size: 11px; line-height: 1.4; }}
+    .vrp-route-card.expanded .vrp-route-stops-drawer {{
+      display: block;
+    }}
+    .vrp-stop-step {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px dashed #e2e8f0;
+      cursor: pointer;
+    }}
+    .vrp-stop-step:last-child {{
+      border-bottom: none;
+    }}
+    .vrp-stop-step:hover {{
+      color: var(--primary);
+    }}
+
     .twcvrp-legend-toggle {{
       position: fixed;
       top: 14px;
@@ -968,14 +1200,16 @@ def create_map_visualization(
       z-index: 10000;
       cursor: pointer;
       background: #ffffff;
-      border: 1px solid rgba(0,0,0,0.08);
-      color: #222;
-      padding: 10px 12px;
-      border-radius: 10px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      border: 1px solid var(--panel-border);
+      color: var(--text-main);
+      padding: 10px 14px;
+      border-radius: 11px;
+      box-shadow: var(--panel-shadow);
       font-size: 13px;
       font-weight: 600;
       display: none;
+      align-items: center;
+      gap: 7px;
     }}
 
     /* Resumen de métricas en leyenda */
@@ -986,62 +1220,104 @@ def create_map_visualization(
       margin-bottom: 10px;
     }}
     .vrp-kpi-box {{
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 6px 8px;
+      background: var(--surface-muted);
+      border: 1px solid var(--border-light);
+      border-radius: 9px;
+      padding: 7px 9px;
     }}
     .vrp-kpi-label {{
-      font-size: 10px;
+      font-size: 10.5px;
       color: var(--text-muted);
       font-weight: 600;
     }}
     .vrp-kpi-val {{
-      font-size: 13px;
+      font-size: 13.5px;
       font-weight: 700;
-      color: #0f172a;
+      color: var(--text-main);
+      margin-top: 1px;
     }}
 
-    /* Marcadores arrastrables de edición en el mapa */
-    .draft-marker {{
-      width: 24px;
-      height: 24px;
+    /* Marcadores unificados y arrastrables en el mapa */
+    .vrp-map-marker {{
+      width: 26px;
+      height: 26px;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 11px;
+      font-size: 11.5px;
       font-weight: 700;
       cursor: grab;
-      box-shadow: 0 3px 8px rgba(0,0,0,0.28);
-      border: 2px solid #ffffff;
+      box-shadow: 0 3px 10px rgba(15, 23, 42, 0.32);
+      border: 2.5px solid #ffffff;
       user-select: none;
+      transition: transform 120ms ease, box-shadow 120ms ease;
     }}
-    .draft-marker.depot {{
-      width: 30px;
-      height: 30px;
-      background: #111827;
+    .vrp-map-marker:hover {{
+      transform: scale(1.16);
+      z-index: 50 !important;
+    }}
+    .vrp-map-marker:active {{
+      cursor: grabbing;
+    }}
+    .vrp-map-marker.depot {{
+      width: 32px;
+      height: 32px;
+      background: #0f172a;
       color: #ffffff;
       font-size: 13px;
+      border-width: 3px;
     }}
-    .draft-marker.entrega {{
+    .vrp-map-marker.entrega {{
       background: #ef4444;
       color: #ffffff;
     }}
-    .draft-marker.recogida {{
+    .vrp-map-marker.recogida {{
       background: #2563eb;
       color: #ffffff;
     }}
 
     .maplibregl-popup-content {{
-      border-radius: 10px;
+      border-radius: 11px;
       padding: 12px 14px;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.18);
-      font-size: 12.5px;
+      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.18);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      font-family: "Inter", sans-serif;
+      font-size: 12px;
       line-height: 1.45;
+      min-width: 195px;
+    }}
+    .vrp-popup-actions {{
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #f1f5f9;
+    }}
+    .vrp-popup-btn {{
+      flex: 1;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border-light);
+      background: #f8fafc;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }}
+    .vrp-popup-btn:hover {{
+      background: #e2e8f0;
+    }}
+    .vrp-popup-btn.danger {{
+      color: var(--danger);
+      border-color: #fecaca;
+      background: #fef2f2;
     }}
 
-    @media (max-width: 900px) {{
+    @media (max-width: 960px) {{
       .twcvrp-search-bar {{
         display: none;
       }}
@@ -1051,19 +1327,29 @@ def create_map_visualization(
 <body>
   <div id="map"></div>
 
+  <!-- Toast de notificación -->
+  <div id="vrp-toast" class="vrp-toast"></div>
+
+  <!-- Banner inferior de modo clic en el mapa -->
+  <div id="vrp-map-banner" class="vrp-map-banner">
+    <i class="fa fa-crosshairs" style="color:#4ade80;"></i>
+    <span>Haz clic en cualquier punto del mapa para agregar una ubicación</span>
+    <button id="btn-banner-exit">Salir (Esc)</button>
+  </div>
+
   <!-- Botón para abrir Side Panel cuando está colapsado -->
-  <button id="vrp-side-toggle" class="vrp-side-toggle" title="Abrir panel de puntos y opciones">
-    <i class="fa fa-sliders"></i> Panel VRP
+  <button id="vrp-side-toggle" class="vrp-side-toggle" title="Abrir panel de planificación">
+    <i class="fa fa-sliders" style="color:var(--primary)"></i> Planificador VRP
   </button>
 
   <!-- ================= SIDE PANEL IZQUIERDO ================= -->
   <aside id="vrp-side-panel" class="vrp-side-panel">
     <div class="vrp-panel-header">
       <h3 class="vrp-panel-title">
-        <i class="fa fa-route" style="color:var(--primary)"></i>
+        <span class="vrp-title-icon"><i class="fa fa-route"></i></span>
         Planificador VRP
       </h3>
-      <button id="vrp-side-close" class="vrp-icon-btn" title="Ocultar panel">
+      <button id="vrp-side-close" class="vrp-icon-btn" title="Ocultar panel lateral">
         <i class="fa fa-chevron-left"></i>
       </button>
     </div>
@@ -1074,7 +1360,7 @@ def create_map_visualization(
         <span id="vrp-points-count" class="vrp-badge-count">0</span>
       </button>
       <button class="vrp-tab-btn" data-tab="tab-config">
-        <i class="fa fa-gear"></i> Opciones
+        <i class="fa fa-sliders"></i> Opciones
       </button>
     </div>
 
@@ -1082,26 +1368,68 @@ def create_map_visualization(
       <!-- PESTAÑA 1: PUNTOS Y CSV -->
       <div id="tab-points" class="vrp-tab-pane active">
         <div class="vrp-toolbar">
-          <button id="btn-import-csv" class="vrp-btn" title="Importar archivo CSV como data/data.csv">
+          <button id="btn-import-csv" class="vrp-btn" title="Importar archivo CSV (o arrástralo aquí)">
             <i class="fa fa-file-arrow-up" style="color:var(--primary)"></i> Importar CSV
           </button>
           <button id="btn-export-csv" class="vrp-btn" title="Descargar puntos actuales en CSV">
             <i class="fa fa-file-arrow-down"></i> Exportar CSV
           </button>
+          <button id="btn-load-demo" class="vrp-btn" title="Cargar ejemplo de varias paradas en Mérida">
+            <i class="fa fa-wand-magic-sparkles" style="color:var(--warning)"></i> Demo
+          </button>
           <input id="input-csv-file" type="file" accept=".csv,text/csv" style="display:none" />
         </div>
 
-        <button id="btn-map-click-mode" class="vrp-btn vrp-btn-map-mode">
-          <i class="fa fa-crosshairs"></i>
-          <span id="map-click-mode-label">Agregar puntos haciendo clic en el mapa</span>
-        </button>
+        <!-- Caja de modo clic en el mapa -->
+        <div id="map-mode-box" class="vrp-map-mode-box">
+          <button id="btn-map-click-mode" class="vrp-btn vrp-btn-map-mode">
+            <i class="fa fa-crosshairs"></i>
+            <span id="map-click-mode-label">Poner puntos haciendo clic en el mapa</span>
+          </button>
+          <div class="vrp-quick-defaults">
+            <div class="vrp-field">
+              <label for="quick-type">Rol al hacer clic</label>
+              <select id="quick-type" class="vrp-select">
+                <option value="Entrega">Entrega</option>
+                <option value="Recogida">Recogida</option>
+                <option value="Depósito">Mover Depósito</option>
+              </select>
+            </div>
+            <div class="vrp-field">
+              <label for="quick-demand">Demanda</label>
+              <input id="quick-demand" type="number" min="0" class="vrp-input" value="3" />
+            </div>
+            <div class="vrp-field">
+              <label for="quick-window">Horario</label>
+              <select id="quick-window" class="vrp-select">
+                <option value="08:00-23:00">08:00 - 23:00</option>
+                <option value="08:00-14:00">08:00 - 14:00</option>
+                <option value="14:00-20:00">14:00 - 20:00</option>
+                <option value="07:00-23:00">07:00 - 23:00</option>
+              </select>
+            </div>
+          </div>
+        </div>
 
-        <!-- Formulario para agregar o editar un punto -->
-        <div class="vrp-form-card">
+        <!-- Botón para abrir formulario manual -->
+        <div class="vrp-form-toggle-row">
+          <span class="twcvrp-section-title" style="margin:0;">Ubicaciones (<span id="lbl-stops-summary">0 paradas</span>)</span>
+          <div style="display:flex;gap:4px;">
+            <button id="btn-toggle-manual-form" class="vrp-btn" style="padding:4px 8px;font-size:11px;">
+              <i class="fa fa-plus"></i> Manual
+            </button>
+            <button id="btn-clear-points" class="vrp-btn" style="padding:4px 8px;font-size:11px;color:var(--danger);" title="Eliminar todas las paradas excepto el depósito">
+              <i class="fa fa-trash-can"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Formulario colapsable para agregar o editar un punto -->
+        <div id="vrp-point-form-card" class="vrp-form-card">
           <div class="vrp-form-header">
-            <span id="form-point-title">Nuevo Punto / Parada</span>
-            <button id="btn-cancel-edit" class="vrp-icon-btn" style="display:none;font-size:11px;padding:2px 6px;" title="Cancelar edición">
-              Cancelar
+            <span id="form-point-title">Agregar Punto Manual</span>
+            <button id="btn-cancel-edit" class="vrp-icon-btn" style="font-size:11px;padding:2px 6px;" title="Cerrar formulario">
+              ✕ Cerrar
             </button>
           </div>
           <input type="hidden" id="point-edit-index" value="-1" />
@@ -1143,7 +1471,7 @@ def create_map_visualization(
             </div>
             <div class="vrp-field">
               <label for="point-demand">Demanda</label>
-              <input id="point-demand" type="number" min="0" class="vrp-input" value="1" />
+              <input id="point-demand" type="number" min="0" class="vrp-input" value="3" />
             </div>
           </div>
 
@@ -1152,17 +1480,16 @@ def create_map_visualization(
               <label for="point-trip-id" title="Para problemas Pickup-Delivery (PDP), dos puntos con el mismo ID_Viaje forman un par">ID Viaje</label>
               <input id="point-trip-id" type="number" min="0" class="vrp-input" value="1" />
             </div>
-            <button id="btn-save-point" class="vrp-btn" style="background:var(--text-main);color:#fff;border-color:var(--text-main);height:30px;">
-              <i class="fa fa-plus"></i> <span id="btn-save-point-label">Guardar punto</span>
+            <button id="btn-save-point" class="vrp-btn" style="background:var(--primary);color:#fff;border-color:var(--primary);height:30px;">
+              <i class="fa fa-check"></i> <span id="btn-save-point-label">Guardar punto</span>
             </button>
           </div>
         </div>
 
-        <div class="vrp-points-header">
-          <span class="twcvrp-section-title" style="margin:0;">Ubicaciones cargadas</span>
-          <button id="btn-clear-points" class="vrp-icon-btn" style="font-size:11px;color:var(--danger);" title="Dejar solo el depósito">
-            <i class="fa fa-trash-can"></i> Limpiar paradas
-          </button>
+        <!-- Banner de cambios sin recalcular -->
+        <div id="vrp-dirty-banner" class="vrp-dirty-banner">
+          <span><i class="fa fa-circle-exclamation"></i> Puntos modificados</span>
+          <span style="text-decoration:underline;cursor:pointer;" id="btn-recalc-inline">Recalcular ahora</span>
         </div>
 
         <div id="vrp-points-list" class="vrp-points-list"></div>
@@ -1170,11 +1497,11 @@ def create_map_visualization(
 
       <!-- PESTAÑA 2: OPCIONES Y PARÁMETROS IMPORTANTES -->
       <div id="tab-config" class="vrp-tab-pane">
-        <div class="vrp-form-card">
+        <div class="vrp-form-card open" style="display:block;">
           <div class="vrp-form-header">Flota y Capacidad</div>
           <div class="vrp-grid-2">
             <div class="vrp-field">
-              <label for="cfg-num-vehicles">Número de vehículos</label>
+              <label for="cfg-num-vehicles">Vehículos disponibles</label>
               <input id="cfg-num-vehicles" type="number" min="1" max="200" class="vrp-input" value="5" />
             </div>
             <div class="vrp-field">
@@ -1195,8 +1522,8 @@ def create_map_visualization(
           </div>
         </div>
 
-        <div class="vrp-form-card" style="margin-bottom:0;">
-          <div class="vrp-form-header">Modelo de Ruteo y Motor</div>
+        <div class="vrp-form-card open" style="display:block;margin-bottom:0;">
+          <div class="vrp-form-header">Modelo de Ruteo y Red Vial</div>
           <div class="vrp-field" style="margin-bottom:8px;">
             <label for="cfg-problem-type">Tipo de problema VRP</label>
             <select id="cfg-problem-type" class="vrp-select">
@@ -1216,15 +1543,20 @@ def create_map_visualization(
             </select>
           </div>
 
-          <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;cursor:pointer;margin-top:6px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;cursor:pointer;margin-top:8px;">
             <input id="cfg-depot-return" type="checkbox" checked />
             Retorno obligatorio al depósito al finalizar
           </label>
         </div>
 
         <div id="vrp-capacity-check" class="vrp-capacity-bar ok">
-          <span>Demanda total: <b id="lbl-total-demand">0</b></span>
-          <span>Capacidad flota: <b id="lbl-total-cap">50</b></span>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Demanda total: <b id="lbl-total-demand">0</b></span>
+            <span>Capacidad flota: <b id="lbl-total-cap">50</b></span>
+          </div>
+          <div class="vrp-cap-progress">
+            <div id="vrp-cap-fill" class="vrp-cap-fill" style="width:10%;"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -1235,7 +1567,7 @@ def create_map_visualization(
         <span id="btn-run-solver-label">Calcular Rutas en el Mapa</span>
       </button>
       <div id="vrp-status-msg" class="vrp-status-msg">
-        Haz clic en el mapa o importa tu CSV para comenzar
+        Haz clic en un punto o en una ruta para ver su información
       </div>
     </div>
   </aside>
@@ -1251,7 +1583,9 @@ def create_map_visualization(
   <div id="twcvrp-legend" class="twcvrp-legend-panel open">
     <div class="twcvrp-legend-header">
       <h4 class="twcvrp-legend-title">Rutas y Vista 3D</h4>
-      <button id="twcvrp-legend-close" class="twcvrp-legend-close" title="Ocultar">×</button>
+      <button id="twcvrp-legend-close" class="vrp-icon-btn" title="Ocultar panel derecho">
+        <i class="fa fa-chevron-right"></i>
+      </button>
     </div>
     <div class="twcvrp-legend-content">
       <div id="vrp-summary-kpis" style="display:none;">
@@ -1276,26 +1610,40 @@ def create_map_visualization(
         <hr class="twcvrp-divider" />
       </div>
 
-      <div class="twcvrp-item"><span class="vrp-point-badge depot" style="width:16px;height:16px;font-size:9px;">D</span> Depósito</div>
-      <div class="twcvrp-item"><i class="fa fa-circle" style="color:#ef4444;"></i> Parada de Entrega / Recogida</div>
-      <hr class="twcvrp-divider" />
-      <div class="twcvrp-route-actions">
-        <button id="twcvrp-toggle-pitch" class="twcvrp-btn-3d" title="Alternar vista 3D / 2D">
-          <i class="fa fa-cube"></i> Vista 3D / 2D
+      <div class="twcvrp-section-title">Cámara y Mapa</div>
+      <div class="vrp-cam-grid">
+        <button id="twcvrp-toggle-pitch" class="vrp-btn" title="Alternar inclinación 3D y vista 2D superior">
+          <i class="fa fa-cube" style="color:var(--primary)"></i> <span id="lbl-toggle-pitch">Vista 3D</span>
         </button>
-        <button id="twcvrp-eye-all" class="twcvrp-eye" title="Ocultar todas">
+        <button id="btn-fit-bounds" class="vrp-btn" title="Encuadrar todos los puntos en pantalla">
+          <i class="fa fa-expand"></i> Centrar todo
+        </button>
+      </div>
+      <div class="vrp-field" style="margin-bottom:8px;">
+        <select id="select-map-style" class="vrp-select" title="Cambiar estilo visual del mapa 3D">
+          <option value="https://tiles.openfreemap.org/styles/positron">Mapa Claro (Positron 3D)</option>
+          <option value="https://tiles.openfreemap.org/styles/liberty">Mapa Calles (Liberty 3D)</option>
+          <option value="https://tiles.openfreemap.org/styles/bright">Mapa Detallado (Bright 3D)</option>
+        </select>
+      </div>
+
+      <hr class="twcvrp-divider" />
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span class="twcvrp-section-title" style="margin:0;">Rutas por vehículo</span>
+        <button id="twcvrp-eye-all" class="vrp-icon-btn" style="font-size:11px;padding:2px 6px;" title="Mostrar u ocultar todas las rutas">
           <i class="fa fa-eye"></i> <span id="twcvrp-eye-all-label">Ocultar todas</span>
         </button>
       </div>
-      <div class="twcvrp-section-title">Rutas por vehículo</div>
       <div id="twcvrp-routes-container"></div>
       <hr class="twcvrp-divider" />
-      <p class="twcvrp-hint">
-        <b>Tip:</b> Puedes arrastrar los puntos en el mapa para ajustar su ubicación o rotar la cámara 3D con <b>clic derecho</b>.
+      <p style="margin:0;color:var(--text-muted);font-size:11px;line-height:1.45;">
+        <b>Tip:</b> Haz clic en un punto para ver sus detalles, haz clic en una ruta para ver la información del vehículo o gira la cámara 3D con <b>clic derecho</b>.
       </p>
     </div>
   </div>
-  <button id="twcvrp-legend-toggle" class="twcvrp-legend-toggle" title="Mostrar rutas y leyenda">☰ Rutas</button>
+  <button id="twcvrp-legend-toggle" class="twcvrp-legend-toggle" title="Mostrar rutas y vista 3D">
+    <i class="fa fa-layer-group" style="color:var(--primary)"></i> Rutas 3D
+  </button>
 
   <script>
     let MAP_DATA = {map_data_json};
@@ -1328,13 +1676,78 @@ def create_map_visualization(
 
     let mapLoaded = false;
     let mapClickAddMode = false;
+    let is3D = true;
     let activeRouteLayerIds = [];
     let activeRouteSourceIds = [];
-    let draftMarkers = [];
+    let mapMarkers = [];
+    let activePopup = null;
     const vehicleVisibility = {{}};
-    let searchableLocations = [];
+    let stopAssignmentMap = {{}}; // locIndex -> {{ vehicle_display_id, sequence, arrival, departure, color }}
 
-    // ================= INICIALIZAR CONTROLES DE CONFIGURACIÓN =================
+    // ================= NOTIFICACIONES Y ESTADO =================
+    let toastTimer = null;
+    function showToast(text, type = '') {{
+      const t = document.getElementById('vrp-toast');
+      t.innerHTML = type === 'error'
+        ? `<i class="fa fa-circle-xmark"></i> <span>${{text}}</span>`
+        : `<i class="fa fa-circle-check"></i> <span>${{text}}</span>`;
+      t.className = 'vrp-toast show' + (type ? ' ' + type : '');
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {{
+        t.classList.remove('show');
+      }}, 3000);
+    }}
+
+    function setStatus(text, type = '') {{
+      const el = document.getElementById('vrp-status-msg');
+      el.textContent = text;
+      el.className = 'vrp-status-msg' + (type ? ' ' + type : '');
+      if (type === 'error' || type === 'success') {{
+        showToast(text, type);
+      }}
+    }}
+
+    function markRoutesDirty(isDirty) {{
+      const banner = document.getElementById('vrp-dirty-banner');
+      banner.classList.toggle('visible', Boolean(isDirty));
+    }}
+
+    // ================= PADDING DINÁMICO DE CÁMARA SEGÚN PANELES ABIERTOS =================
+    function getMapPadding() {{
+      const leftOpen = !document.getElementById('vrp-side-panel').classList.contains('collapsed');
+      const rightOpen = document.getElementById('twcvrp-legend').classList.contains('open');
+      const isNarrow = window.innerWidth < 768;
+      return {{
+        top: 80,
+        bottom: 70,
+        left: (!isNarrow && leftOpen) ? 410 : 60,
+        right: (!isNarrow && rightOpen) ? 350 : 60
+      }};
+    }}
+
+    function fitMapToLocations() {{
+      if (!LOCATIONS.length) return;
+      const b = new maplibregl.LngLatBounds();
+      LOCATIONS.forEach(l => b.extend([Number(l.Longitud), Number(l.Latitud)]));
+      if (MAP_DATA && MAP_DATA.routes) {{
+        MAP_DATA.routes.forEach(r => {{
+          (r.coordinates || []).forEach(c => b.extend(c));
+        }});
+      }}
+      if (!b.isEmpty()) {{
+        map.fitBounds(b, {{
+          padding: getMapPadding(),
+          maxZoom: 15.5,
+          pitch: is3D ? 55 : 0,
+          bearing: is3D ? -15 : 0,
+          duration: 1000
+        }});
+      }}
+    }}
+
+    document.getElementById('btn-fit-bounds').addEventListener('click', fitMapToLocations);
+
+    // ================= CONFIGURACIÓN Y CAPACIDAD =================
     function syncConfigToInputs() {{
       document.getElementById('cfg-num-vehicles').value = CONFIG.num_vehicles ?? 5;
       document.getElementById('cfg-vehicle-capacity').value = CONFIG.vehicle_capacity ?? 10;
@@ -1363,25 +1776,26 @@ def create_map_visualization(
       const cfg = readConfigFromInputs();
       const totalCap = cfg.num_vehicles * cfg.vehicle_capacity;
       const totalDemand = LOCATIONS.reduce((acc, loc, idx) => {{
-        const isDepot = idx === 0 || loc.ID === 0 || (loc.Tipo_Servicio || '').toLowerCase().includes('dep');
-        return acc + (isDepot ? 0 : (parseInt(loc.Demanda, 10) || 0));
+        return acc + (idx === 0 ? 0 : (parseInt(loc.Demanda, 10) || 0));
       }}, 0);
 
       document.getElementById('lbl-total-demand').textContent = totalDemand;
       document.getElementById('lbl-total-cap').textContent = totalCap;
+      const pct = totalCap > 0 ? Math.min(100, Math.round((totalDemand / totalCap) * 100)) : 100;
+      document.getElementById('vrp-cap-fill').style.width = `${{pct}}%`;
       const bar = document.getElementById('vrp-capacity-check');
-      if (totalCap >= totalDemand) {{
-        bar.className = 'vrp-capacity-bar ok';
-      }} else {{
-        bar.className = 'vrp-capacity-bar warn';
-      }}
+      bar.className = totalCap >= totalDemand ? 'vrp-capacity-bar ok' : 'vrp-capacity-bar warn';
     }}
 
-    ['cfg-num-vehicles', 'cfg-vehicle-capacity'].forEach(id => {{
+    ['cfg-num-vehicles', 'cfg-vehicle-capacity', 'cfg-service-time', 'cfg-max-wait', 'cfg-problem-type', 'cfg-depot-return'].forEach(id => {{
+      document.getElementById(id).addEventListener('change', () => {{
+        updateCapacityIndicator();
+        if (MAP_DATA.routes && MAP_DATA.routes.length > 0) markRoutesDirty(true);
+      }});
       document.getElementById(id).addEventListener('input', updateCapacityIndicator);
     }});
 
-    // ================= GESTIÓN DE PUNTOS (LISTA + MARCADORES EN MAPA) =================
+    // ================= GESTIÓN DE PUNTOS Y MARCADORES UNIFICADOS =================
     function normalizeLocationsOrder() {{
       if (!LOCATIONS.length) return;
       const depotIdx = LOCATIONS.findIndex(l => l.ID === 0 || (l.Tipo_Servicio || '').toLowerCase().includes('dep'));
@@ -1403,34 +1817,259 @@ def create_map_visualization(
       }});
     }}
 
+    function buildStopAssignmentLookup() {{
+      stopAssignmentMap = {{}};
+      if (!MAP_DATA || !MAP_DATA.routes) return;
+      MAP_DATA.routes.forEach(route => {{
+        (route.stops || []).forEach(st => {{
+          let matchIdx = st.node_index;
+          if (matchIdx === undefined || !LOCATIONS[matchIdx]) {{
+            matchIdx = LOCATIONS.findIndex((l, idx) =>
+              idx > 0 &&
+              Math.abs(Number(l.Latitud) - Number(st.lat)) < 0.0001 &&
+              Math.abs(Number(l.Longitud) - Number(st.lon)) < 0.0001
+            );
+          }}
+          if (matchIdx > 0) {{
+            stopAssignmentMap[matchIdx] = {{
+              vehicle_display_id: route.display_id,
+              sequence: st.sequence,
+              arrival: st.arrival,
+              departure: st.departure,
+              service_time: st.service_time,
+              color: route.color
+            }};
+          }}
+        }});
+      }});
+    }}
+
+    function buildPopupHtml(loc, idx) {{
+      const isDepot = idx === 0;
+      const assigned = stopAssignmentMap[idx];
+      const routeBadge = assigned
+        ? `<div style="margin:4px 0;padding:3px 7px;border-radius:6px;background:${{assigned.color}}18;color:${{assigned.color}};font-weight:700;font-size:11px;display:inline-block;">
+             Vehículo ${{assigned.vehicle_display_id}} • Parada #${{assigned.sequence}} (${{assigned.arrival}} - ${{assigned.departure}})
+           </div><br>`
+        : '';
+
+      return `
+        <div>
+          <div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:2px;">${{loc.Nombre}}</div>
+          ${{routeBadge}}
+          <span style="color:#64748b;">Tipo:</span> <b>${{isDepot ? 'Depósito (Origen)' : loc.Tipo_Servicio}}</b><br>
+          <span style="color:#64748b;">Horario:</span> ${{loc.Horario_Inicio}} - ${{loc.Horario_Fin}}<br>
+          ${{!isDepot ? `<span style="color:#64748b;">Demanda:</span> <b>${{loc.Demanda}}</b> &nbsp;|&nbsp; <span style="color:#64748b;">Viaje:</span> #${{loc.ID_Viaje}}<br>` : ''}}
+          <span style="color:#94a3b8;font-size:11px;">${{Number(loc.Latitud).toFixed(6)}}, ${{Number(loc.Longitud).toFixed(6)}}</span>
+          <div class="vrp-popup-actions">
+            <button class="vrp-popup-btn" onclick="window._vrpEditPoint(${{idx}})">
+              <i class="fa fa-pen"></i> Editar
+            </button>
+            ${{!isDepot ? `<button class="vrp-popup-btn danger" onclick="window._vrpDeletePoint(${{idx}})">
+              <i class="fa fa-trash-can"></i> Eliminar
+            </button>` : ''}}
+          </div>
+        </div>
+      `;
+    }}
+
+    window._vrpEditPoint = function(idx) {{
+      if (activePopup) activePopup.remove();
+      const sidePanel = document.getElementById('vrp-side-panel');
+      sidePanel.classList.remove('collapsed');
+      document.getElementById('vrp-side-toggle').style.display = 'none';
+      document.querySelector('[data-tab="tab-points"]').click();
+      loadPointIntoForm(idx);
+    }};
+
+    window._vrpDeletePoint = function(idx) {{
+      if (idx <= 0 || idx >= LOCATIONS.length) return;
+      if (activePopup) activePopup.remove();
+      const removed = LOCATIONS.splice(idx, 1)[0];
+      invalidateSolvedRoutes();
+      renderPointsList();
+      renderMapMarkers();
+      setStatus(`Punto "${{removed.Nombre}}" eliminado.`, 'success');
+    }};
+
+    function buildPointsGeoJSON() {{
+      buildStopAssignmentLookup();
+      const features = [];
+
+      LOCATIONS.forEach((loc, idx) => {{
+        const isDepot = idx === 0;
+        const assigned = stopAssignmentMap[idx];
+
+        if (!isDepot && assigned && vehicleVisibility[assigned.vehicle_display_id] === false) {{
+          return;
+        }}
+
+        const isRecogida = (loc.Tipo_Servicio || '').toLowerCase() === 'recogida';
+        let fillColor = '#ef4444';
+        let strokeColor = '#ffffff';
+        let textColor = '#ffffff';
+        let label = String(idx);
+        let radius = 11.5;
+
+        if (isDepot) {{
+          fillColor = '#0f172a';
+          strokeColor = '#ffffff';
+          textColor = '#ffffff';
+          label = 'D';
+          radius = 14;
+        }} else if (assigned) {{
+          fillColor = '#ffffff';
+          strokeColor = assigned.color;
+          textColor = assigned.color;
+          label = String(assigned.sequence);
+          radius = 11.5;
+        }} else if (isRecogida) {{
+          fillColor = '#2563eb';
+        }}
+
+        features.push({{
+          type: 'Feature',
+          properties: {{
+            idx: idx,
+            label: label,
+            radius: radius,
+            fillColor: fillColor,
+            strokeColor: strokeColor,
+            textColor: textColor
+          }},
+          geometry: {{
+            type: 'Point',
+            coordinates: [Number(loc.Longitud), Number(loc.Latitud)]
+          }}
+        }});
+      }});
+
+      return {{
+        type: 'FeatureCollection',
+        features: features
+      }};
+    }}
+
+    function renderMapMarkers() {{
+      if (!mapLoaded) return;
+      const geojsonData = buildPointsGeoJSON();
+
+      if (map.getSource('vrp-points-source')) {{
+        map.getSource('vrp-points-source').setData(geojsonData);
+      }} else {{
+        map.addSource('vrp-points-source', {{
+          type: 'geojson',
+          data: geojsonData
+        }});
+      }}
+
+      if (!map.getLayer('vrp-points-circle')) {{
+        map.addLayer({{
+          id: 'vrp-points-circle',
+          type: 'circle',
+          source: 'vrp-points-source',
+          paint: {{
+            'circle-radius': ['get', 'radius'],
+            'circle-color': ['get', 'fillColor'],
+            'circle-stroke-color': ['get', 'strokeColor'],
+            'circle-stroke-width': 2.8,
+            'circle-pitch-alignment': 'viewport'
+          }}
+        }});
+      }} else {{
+        map.moveLayer('vrp-points-circle');
+      }}
+
+      if (!map.getLayer('vrp-points-label')) {{
+        map.addLayer({{
+          id: 'vrp-points-label',
+          type: 'symbol',
+          source: 'vrp-points-source',
+          layout: {{
+            'text-field': ['get', 'label'],
+            'text-font': ['Noto Sans Bold'],
+            'text-size': 12,
+            'text-allow-overlap': true,
+            'text-ignore-placement': true
+          }},
+          paint: {{
+            'text-color': ['get', 'textColor']
+          }}
+        }});
+      }} else {{
+        map.moveLayer('vrp-points-label');
+      }}
+    }}
+
+    function buildRoutePopupHtml(props) {{
+      const vid = props.vehicle_id;
+      const color = props.color || '#2563EB';
+      const distStr = props.total_distance_km !== undefined && Number(props.total_distance_km) > 0
+        ? `<span style="color:#64748b;">Distancia:</span> <b>${{props.total_distance_km}} km</b><br>`
+        : '';
+      const capStr = props.vehicle_capacity
+        ? `${{props.total_load}} / ${{props.vehicle_capacity}}`
+        : `${{props.total_load}}`;
+      const stopsListStr = props.stops_summary
+        ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #f1f5f9;font-size:11px;color:#475569;">
+             <b>Recorrido:</b> ${{props.stops_summary}}
+           </div>`
+        : '';
+
+      return `
+        <div>
+          <div style="display:flex;align-items:center;gap:7px;font-weight:700;font-size:13px;color:#0f172a;margin-bottom:4px;">
+            <span class="twcvrp-dot" style="background:${{color}}"></span>
+            <span>Ruta del Vehículo ${{vid}}</span>
+          </div>
+          <span style="color:#64748b;">Paradas asignadas:</span> <b>${{props.num_stops}}</b><br>
+          <span style="color:#64748b;">Tiempo total:</span> <b>${{props.total_time}} h</b><br>
+          ${{distStr}}
+          <span style="color:#64748b;">Carga transportada:</span> <b>${{capStr}}</b>
+          ${{stopsListStr}}
+        </div>
+      `;
+    }}
+
     function renderPointsList() {{
       normalizeLocationsOrder();
+      buildStopAssignmentLookup();
       const listEl = document.getElementById('vrp-points-list');
       const countEl = document.getElementById('vrp-points-count');
+      const stopsSummaryEl = document.getElementById('lbl-stops-summary');
       countEl.textContent = LOCATIONS.length;
+      const numStops = Math.max(0, LOCATIONS.length - 1);
+      stopsSummaryEl.textContent = `${{numStops}} ${{numStops === 1 ? 'parada' : 'paradas'}}`;
       listEl.innerHTML = '';
 
       LOCATIONS.forEach((loc, idx) => {{
         const isDepot = idx === 0;
+        const assigned = stopAssignmentMap[idx];
         const tipoClass = isDepot ? 'depot' : ((loc.Tipo_Servicio || '').toLowerCase() === 'recogida' ? 'recogida' : 'entrega');
-        const badgeText = isDepot ? 'D' : idx;
+        const badgeText = isDepot ? 'D' : (assigned ? assigned.sequence : idx);
+        const badgeStyle = (!isDepot && assigned)
+          ? `background:${{assigned.color}};color:#fff;border:none;`
+          : '';
 
         const item = document.createElement('div');
         item.className = 'vrp-point-item';
         item.innerHTML = `
-          <span class="vrp-point-badge ${{tipoClass}}">${{badgeText}}</span>
+          <span class="vrp-point-badge ${{tipoClass}}" style="${{badgeStyle}}">${{badgeText}}</span>
           <div class="vrp-point-info">
-            <div class="vrp-point-name">${{loc.Nombre}}</div>
+            <div class="vrp-point-name">
+              <span>${{loc.Nombre}}</span>
+              ${{assigned ? `<span style="font-size:10px;padding:1px 5px;border-radius:4px;background:${{assigned.color}}18;color:${{assigned.color}};font-weight:700;">V${{assigned.vehicle_display_id}} • ${{assigned.arrival}}</span>` : ''}}
+            </div>
             <div class="vrp-point-meta">
-              ${{isDepot ? 'Depósito' : loc.Tipo_Servicio + ' • Dem: ' + loc.Demanda + ' • Viaje #' + loc.ID_Viaje}}
+              ${{isDepot ? 'Depósito de salida' : loc.Tipo_Servicio + ' • Dem: ' + loc.Demanda + ' • Viaje #' + loc.ID_Viaje}}
               (${{loc.Horario_Inicio}}-${{loc.Horario_Fin}})
             </div>
           </div>
           <div class="vrp-point-actions">
-            <button class="vrp-icon-btn btn-edit-pt" data-idx="${{idx}}" title="Editar punto" style="font-size:12px;padding:3px 5px;">
+            <button class="vrp-icon-btn btn-edit-pt" data-idx="${{idx}}" title="Editar punto" style="font-size:12px;padding:4px 6px;">
               <i class="fa fa-pen"></i>
             </button>
-            ${{!isDepot ? `<button class="vrp-icon-btn btn-del-pt" data-idx="${{idx}}" title="Eliminar punto" style="font-size:12px;padding:3px 5px;color:var(--danger);">
+            ${{!isDepot ? `<button class="vrp-icon-btn btn-del-pt" data-idx="${{idx}}" title="Eliminar punto" style="font-size:12px;padding:4px 6px;color:var(--danger);">
               <i class="fa fa-xmark"></i>
             </button>` : ''}}
           </div>
@@ -1438,12 +2077,7 @@ def create_map_visualization(
 
         item.addEventListener('click', (e) => {{
           if (e.target.closest('.btn-edit-pt') || e.target.closest('.btn-del-pt')) return;
-          map.flyTo({{
-            center: [loc.Longitud, loc.Latitud],
-            zoom: 16,
-            pitch: is3D ? 55 : 0,
-            duration: 900
-          }});
+          focusLocationOnMap(idx);
         }});
 
         listEl.appendChild(item);
@@ -1459,26 +2093,55 @@ def create_map_visualization(
       listEl.querySelectorAll('.btn-del-pt').forEach(btn => {{
         btn.addEventListener('click', () => {{
           const idx = parseInt(btn.getAttribute('data-idx'), 10);
-          LOCATIONS.splice(idx, 1);
-          renderPointsList();
-          renderDraftMarkers();
-          updateCapacityIndicator();
+          window._vrpDeletePoint(idx);
         }});
       }});
 
-      // Sugerir siguiente ID_Viaje en el formulario si no se está editando
       if (document.getElementById('point-edit-index').value === '-1') {{
         document.getElementById('point-trip-id').value = Math.max(1, LOCATIONS.length);
       }}
       updateCapacityIndicator();
     }}
 
+    function focusLocationOnMap(idx) {{
+      const loc = LOCATIONS[idx];
+      if (!loc) return;
+      if (activePopup) activePopup.remove();
+      map.flyTo({{
+        center: [Number(loc.Longitud), Number(loc.Latitud)],
+        zoom: 16.5,
+        pitch: is3D ? 58 : 0,
+        padding: getMapPadding(),
+        duration: 950
+      }});
+      const popup = new maplibregl.Popup({{ offset: 16 }})
+        .setLngLat([Number(loc.Longitud), Number(loc.Latitud)])
+        .setHTML(buildPopupHtml(loc, idx))
+        .addTo(map);
+      activePopup = popup;
+    }}
+
+    // ================= FORMULARIO MANUAL / EDICIÓN =================
+    const formCard = document.getElementById('vrp-point-form-card');
+    document.getElementById('btn-toggle-manual-form').addEventListener('click', () => {{
+      if (formCard.classList.contains('open') && document.getElementById('point-edit-index').value === '-1') {{
+        formCard.classList.remove('open');
+      }} else {{
+        resetPointForm();
+        const center = map.getCenter();
+        document.getElementById('point-lat').value = center.lat.toFixed(6);
+        document.getElementById('point-lon').value = center.lng.toFixed(6);
+        formCard.classList.add('open');
+        document.getElementById('point-name').focus();
+      }}
+    }});
+
     function loadPointIntoForm(idx) {{
       const loc = LOCATIONS[idx];
       if (!loc) return;
+      formCard.classList.add('open');
       document.getElementById('point-edit-index').value = String(idx);
       document.getElementById('form-point-title').textContent = `Editando: ${{loc.Nombre}}`;
-      document.getElementById('btn-cancel-edit').style.display = 'inline-block';
       document.getElementById('btn-save-point-label').textContent = 'Actualizar';
       document.getElementById('point-type').value = idx === 0 ? 'Depósito' : (loc.Tipo_Servicio || 'Entrega');
       document.getElementById('point-name').value = loc.Nombre;
@@ -1492,18 +2155,20 @@ def create_map_visualization(
 
     function resetPointForm() {{
       document.getElementById('point-edit-index').value = '-1';
-      document.getElementById('form-point-title').textContent = 'Nuevo Punto / Parada';
-      document.getElementById('btn-cancel-edit').style.display = 'none';
+      document.getElementById('form-point-title').textContent = 'Agregar Punto Manual';
       document.getElementById('btn-save-point-label').textContent = 'Guardar punto';
       document.getElementById('point-type').value = LOCATIONS.length === 0 ? 'Depósito' : 'Entrega';
       document.getElementById('point-name').value = '';
       document.getElementById('point-lat').value = '';
       document.getElementById('point-lon').value = '';
-      document.getElementById('point-demand').value = '5';
+      document.getElementById('point-demand').value = '3';
       document.getElementById('point-trip-id').value = String(Math.max(1, LOCATIONS.length));
     }}
 
-    document.getElementById('btn-cancel-edit').addEventListener('click', resetPointForm);
+    document.getElementById('btn-cancel-edit').addEventListener('click', () => {{
+      resetPointForm();
+      formCard.classList.remove('open');
+    }});
 
     document.getElementById('btn-save-point').addEventListener('click', () => {{
       const editIdx = parseInt(document.getElementById('point-edit-index').value, 10);
@@ -1512,11 +2177,11 @@ def create_map_visualization(
       const lon = parseFloat(document.getElementById('point-lon').value);
 
       if (Number.isNaN(lat) || Number.isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {{
-        setStatus('Ingresa una Latitud y Longitud válidas o haz clic en el mapa.', 'error');
+        setStatus('Ingresa una Latitud y Longitud válidas.', 'error');
         return;
       }}
 
-      const isDepot = tipo === 'Depósito';
+      const isDepot = tipo === 'Depósito' || editIdx === 0;
       const defaultName = isDepot ? 'Depósito' : `Parada ${{editIdx >= 0 ? editIdx : LOCATIONS.length}}`;
       const nombre = document.getElementById('point-name').value.trim() || defaultName;
       const inicio = document.getElementById('point-start').value || '08:00';
@@ -1527,7 +2192,7 @@ def create_map_visualization(
       const newObj = {{
         ID: isDepot ? 0 : (editIdx > 0 ? editIdx : LOCATIONS.length),
         ID_Viaje: idViaje,
-        Tipo_Servicio: tipo,
+        Tipo_Servicio: isDepot ? 'Depósito' : tipo,
         Nombre: nombre,
         Latitud: Number(lat.toFixed(6)),
         Longitud: Number(lon.toFixed(6)),
@@ -1545,73 +2210,52 @@ def create_map_visualization(
       }}
 
       resetPointForm();
+      formCard.classList.remove('open');
+      invalidateSolvedRoutes();
       renderPointsList();
-      renderDraftMarkers();
+      renderMapMarkers();
       setStatus(`Punto "${{nombre}}" guardado.`, 'success');
     }});
 
     document.getElementById('btn-clear-points').addEventListener('click', () => {{
       if (LOCATIONS.length <= 1) return;
       LOCATIONS = [LOCATIONS[0]];
+      MAP_DATA.routes = [];
       clearRoutesFromMap();
+      markRoutesDirty(false);
       renderPointsList();
-      renderDraftMarkers();
-      setStatus('Paradas eliminadas. Se conservó el depósito.', '');
+      renderMapMarkers();
+      setStatus('Paradas eliminadas. Se conservó el depósito.', 'success');
     }});
 
-    // ================= MARCADORES ARRASTRABLES DE PUNTOS EN EL MAPA =================
-    function renderDraftMarkers() {{
-      draftMarkers.forEach(m => m.remove());
-      draftMarkers = [];
-
-      LOCATIONS.forEach((loc, idx) => {{
-        const isDepot = idx === 0;
-        const el = document.createElement('div');
-        const tipoClass = isDepot ? 'depot' : ((loc.Tipo_Servicio || '').toLowerCase() === 'recogida' ? 'recogida' : 'entrega');
-        el.className = `draft-marker ${{tipoClass}}`;
-        el.textContent = isDepot ? 'D' : String(idx);
-        el.title = `${{loc.Nombre}} (Arrastra para mover)`;
-
-        const popupHtml = `
-          <b>${{loc.Nombre}}</b><br>
-          Tipo: ${{isDepot ? 'Depósito' : loc.Tipo_Servicio}}<br>
-          Horario: ${{loc.Horario_Inicio}} - ${{loc.Horario_Fin}}<br>
-          ${{!isDepot ? `Demanda: ${{loc.Demanda}} | ID Viaje: ${{loc.ID_Viaje}}<br>` : ''}}
-          Coords: ${{Number(loc.Latitud).toFixed(6)}}, ${{Number(loc.Longitud).toFixed(6)}}
-        `;
-
-        const marker = new maplibregl.Marker({{ element: el, draggable: true }})
-          .setLngLat([loc.Longitud, loc.Latitud])
-          .setPopup(new maplibregl.Popup({{ offset: 14 }}).setHTML(popupHtml))
-          .addTo(map);
-
-        marker.on('dragend', () => {{
-          const lngLat = marker.getLngLat();
-          LOCATIONS[idx].Latitud = Number(lngLat.lat.toFixed(6));
-          LOCATIONS[idx].Longitud = Number(lngLat.lng.toFixed(6));
-          renderPointsList();
-          setStatus(`Ubicación de "${{LOCATIONS[idx].Nombre}}" actualizada en el mapa.`, 'success');
-        }});
-
-        draftMarkers.push(marker);
-      }});
-    }}
+    document.getElementById('btn-recalc-inline').addEventListener('click', () => {{
+      document.getElementById('btn-run-solver').click();
+    }});
 
     // ================= MODO CLIC EN EL MAPA PARA AGREGAR PUNTOS =================
     const btnMapMode = document.getElementById('btn-map-click-mode');
+    const boxMapMode = document.getElementById('map-mode-box');
     const lblMapMode = document.getElementById('map-click-mode-label');
+    const mapBanner = document.getElementById('vrp-map-banner');
 
     function setMapClickMode(active) {{
       mapClickAddMode = active;
       btnMapMode.classList.toggle('active', active);
+      boxMapMode.classList.toggle('active', active);
+      mapBanner.classList.toggle('visible', active);
       document.getElementById('map').classList.toggle('crosshair-mode', active);
       lblMapMode.textContent = active
-        ? 'Modo activo: Haz clic en el mapa para poner puntos'
-        : 'Agregar puntos haciendo clic en el mapa';
+        ? 'Modo activo: Haz clic en el mapa para colocar'
+        : 'Poner puntos haciendo clic en el mapa';
     }}
 
-    btnMapMode.addEventListener('click', () => {{
-      setMapClickMode(!mapClickAddMode);
+    btnMapMode.addEventListener('click', () => setMapClickMode(!mapClickAddMode));
+    document.getElementById('btn-banner-exit').addEventListener('click', () => setMapClickMode(false));
+
+    document.addEventListener('keydown', (e) => {{
+      if (e.key === 'Escape' && mapClickAddMode) {{
+        setMapClickMode(false);
+      }}
     }});
 
     map.on('click', (e) => {{
@@ -1619,29 +2263,28 @@ def create_map_visualization(
       const lat = Number(e.lngLat.lat.toFixed(6));
       const lon = Number(e.lngLat.lng.toFixed(6));
 
-      // Si el usuario está editando un punto existente en el formulario, actualizar sus coordenadas
+      // Si el formulario de edición está abierto, capturar coordenadas ahí
       const editIdx = parseInt(document.getElementById('point-edit-index').value, 10);
-      if (editIdx >= 0) {{
+      if (formCard.classList.contains('open') && editIdx >= 0) {{
         document.getElementById('point-lat').value = lat;
         document.getElementById('point-lon').value = lon;
-        setStatus('Coordenadas capturadas desde el mapa. Presiona Actualizar.', 'success');
+        setStatus('Coordenadas capturadas desde el mapa.', 'success');
         return;
       }}
 
-      const tipoSelect = document.getElementById('point-type').value;
-      const isDepot = LOCATIONS.length === 0 || tipoSelect === 'Depósito';
+      const quickType = document.getElementById('quick-type').value;
+      const isDepot = LOCATIONS.length === 0 || quickType === 'Depósito';
       const nextIdx = isDepot ? 0 : LOCATIONS.length;
-      const customName = document.getElementById('point-name').value.trim();
-      const nombre = customName || (isDepot ? 'Depósito' : `Parada ${{nextIdx}}`);
-      const inicio = document.getElementById('point-start').value || (isDepot ? '07:00' : '08:00');
-      const fin = document.getElementById('point-end').value || '23:00';
-      const demanda = isDepot ? 0 : (parseInt(document.getElementById('point-demand').value, 10) || 5);
-      const idViaje = isDepot ? 0 : nextIdx;
+      const nombre = isDepot ? 'Depósito' : `Parada ${{nextIdx}}`;
+      const winParts = (document.getElementById('quick-window').value || '08:00-23:00').split('-');
+      const inicio = isDepot ? '07:00' : (winParts[0] || '08:00');
+      const fin = winParts[1] || '23:00';
+      const demanda = isDepot ? 0 : (parseInt(document.getElementById('quick-demand').value, 10) || 3);
 
       const pt = {{
         ID: nextIdx,
-        ID_Viaje: idViaje,
-        Tipo_Servicio: isDepot ? 'Depósito' : tipoSelect,
+        ID_Viaje: isDepot ? 0 : nextIdx,
+        Tipo_Servicio: isDepot ? 'Depósito' : quickType,
         Nombre: nombre,
         Latitud: lat,
         Longitud: lon,
@@ -1652,26 +2295,45 @@ def create_map_visualization(
 
       if (isDepot && LOCATIONS.length > 0) {{
         LOCATIONS[0] = pt;
+        document.getElementById('quick-type').value = 'Entrega';
       }} else {{
         LOCATIONS.push(pt);
       }}
 
-      document.getElementById('point-name').value = '';
-      if (isDepot) document.getElementById('point-type').value = 'Entrega';
+      invalidateSolvedRoutes();
       renderPointsList();
-      renderDraftMarkers();
-      setStatus(`Agregado "${{nombre}}" (${{lat}}, ${{lon}})`, 'success');
+      renderMapMarkers();
+      setStatus(`Agregado "${{nombre}}" en el mapa.`, 'success');
     }});
 
-    // ================= IMPORTAR / EXPORTAR CSV =================
+    // ================= IMPORTAR / EXPORTAR CSV Y DEMO =================
     const fileInput = document.getElementById('input-csv-file');
     document.getElementById('btn-import-csv').addEventListener('click', () => fileInput.click());
+
+    // Soporte Drag & Drop sobre el Side Panel
+    const sidePanelEl = document.getElementById('vrp-side-panel');
+    sidePanelEl.addEventListener('dragover', (e) => {{
+      e.preventDefault();
+      sidePanelEl.classList.add('drag-over');
+    }});
+    sidePanelEl.addEventListener('dragleave', () => {{
+      sidePanelEl.classList.remove('drag-over');
+    }});
+    sidePanelEl.addEventListener('drop', async (e) => {{
+      e.preventDefault();
+      sidePanelEl.classList.remove('drag-over');
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) await handleCsvFileUpload(file);
+    }});
 
     fileInput.addEventListener('change', async (e) => {{
       const file = e.target.files[0];
       if (!file) return;
+      await handleCsvFileUpload(file);
+      fileInput.value = '';
+    }});
 
-      // Intentar primero vía backend /api/import-csv; si se abrió como archivo local, parsear en navegador
+    async function handleCsvFileUpload(file) {{
       const formData = new FormData();
       formData.append('file', file);
 
@@ -1683,29 +2345,30 @@ def create_map_visualization(
         if (resp.ok) {{
           const data = await resp.json();
           LOCATIONS = data.locations;
+          MAP_DATA.routes = [];
           clearRoutesFromMap();
+          markRoutesDirty(false);
           renderPointsList();
-          renderDraftMarkers();
+          renderMapMarkers();
           fitMapToLocations();
           setStatus(data.message, 'success');
-          fileInput.value = '';
           return;
         }} else {{
           const err = await resp.json();
           setStatus(err.detail || 'Error al importar CSV', 'error');
-          fileInput.value = '';
           return;
         }}
       }} catch (_) {{
-        // Fallback parser local en navegador si el usuario abrió el HTML directamente sin servidor
         const text = await file.text();
         parseCsvInBrowser(text);
-        fileInput.value = '';
       }}
-    }});
+    }}
 
     function parseCsvInBrowser(csvText) {{
-      const lines = csvText.split(new RegExp('\\r?\\n')).filter(l => l.trim().length > 0);
+      const lines = csvText
+        .split(String.fromCharCode(10))
+        .map(l => l.replace(String.fromCharCode(13), '').trim())
+        .filter(l => l.length > 0);
       if (lines.length < 2) {{
         setStatus('El archivo CSV está vacío.', 'error');
         return;
@@ -1753,9 +2416,11 @@ def create_map_visualization(
       }}
 
       LOCATIONS = parsed;
+      MAP_DATA.routes = [];
       clearRoutesFromMap();
+      markRoutesDirty(false);
       renderPointsList();
-      renderDraftMarkers();
+      renderMapMarkers();
       fitMapToLocations();
       setStatus(`Importadas ${{LOCATIONS.length}} ubicaciones del CSV.`, 'success');
     }}
@@ -1769,7 +2434,7 @@ def create_map_visualization(
         const safeName = String(loc.Nombre || '').replace(/,/g, ' ');
         return `${{isDepot ? 0 : idx}},${{isDepot ? 0 : loc.ID_Viaje}},${{tipo}},${{safeName}},${{loc.Latitud}},${{loc.Longitud}},${{loc.Horario_Inicio}},${{loc.Horario_Fin}},${{isDepot ? 0 : loc.Demanda}}`;
       }});
-      const csvContent = [header, ...rows].join('\\n');
+      const csvContent = [header, ...rows].join(String.fromCharCode(10));
       const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1780,16 +2445,36 @@ def create_map_visualization(
       setStatus('Archivo data.csv descargado.', 'success');
     }});
 
-    function fitMapToLocations() {{
-      if (!LOCATIONS.length) return;
-      const b = new maplibregl.LngLatBounds();
-      LOCATIONS.forEach(l => b.extend([l.Longitud, l.Latitud]));
-      if (!b.isEmpty()) {{
-        map.fitBounds(b, {{ padding: 90, maxZoom: 15, pitch: is3D ? 55 : 0, duration: 1000 }});
+    document.getElementById('btn-load-demo').addEventListener('click', () => {{
+      LOCATIONS = [
+        {{ ID: 0, ID_Viaje: 0, Tipo_Servicio: 'Depósito', Nombre: 'CEDIS Mérida Centro', Latitud: 20.967073, Longitud: -89.623739, Horario_Inicio: '07:00', Horario_Fin: '23:00', Demanda: 0 }},
+        {{ ID: 1, ID_Viaje: 1, Tipo_Servicio: 'Entrega', Nombre: 'Sucursal Caucel', Latitud: 20.998512, Longitud: -89.701420, Horario_Inicio: '08:00', Horario_Fin: '18:00', Demanda: 4 }},
+        {{ ID: 2, ID_Viaje: 2, Tipo_Servicio: 'Entrega', Nombre: 'Plaza Altabrisa', Latitud: 21.017840, Longitud: -89.584310, Horario_Inicio: '09:00', Horario_Fin: '21:00', Demanda: 5 }},
+        {{ ID: 3, ID_Viaje: 3, Tipo_Servicio: 'Entrega', Nombre: 'Parque Industrial Umán', Latitud: 20.912135, Longitud: -89.702568, Horario_Inicio: '08:00', Horario_Fin: '20:00', Demanda: 4 }},
+        {{ ID: 4, ID_Viaje: 4, Tipo_Servicio: 'Entrega', Nombre: 'Montejo Norte', Latitud: 21.028450, Longitud: -89.624890, Horario_Inicio: '08:30', Horario_Fin: '19:00', Demanda: 3 }},
+        {{ ID: 5, ID_Viaje: 5, Tipo_Servicio: 'Entrega', Nombre: 'Kanasín Centro', Latitud: 20.936120, Longitud: -89.563210, Horario_Inicio: '10:00', Horario_Fin: '22:00', Demanda: 4 }},
+        {{ ID: 6, ID_Viaje: 6, Tipo_Servicio: 'Entrega', Nombre: 'Aeropuerto Sur', Latitud: 20.937200, Longitud: -89.643800, Horario_Inicio: '08:00', Horario_Fin: '21:00', Demanda: 3 }}
+      ];
+      document.getElementById('cfg-num-vehicles').value = 3;
+      document.getElementById('cfg-vehicle-capacity').value = 10;
+      MAP_DATA.routes = [];
+      clearRoutesFromMap();
+      markRoutesDirty(true);
+      renderPointsList();
+      renderMapMarkers();
+      fitMapToLocations();
+      setStatus('Demo de 6 entregas en Mérida cargada. Presiona Calcular Rutas.', 'success');
+    }});
+
+    // ================= RENDERIZADO DE RUTAS 3D EN MAPLIBRE =================
+    function invalidateSolvedRoutes() {{
+      if (MAP_DATA && MAP_DATA.routes && MAP_DATA.routes.length > 0) {{
+        MAP_DATA.routes = [];
+        clearRoutesFromMap();
+        markRoutesDirty(true);
       }}
     }}
 
-    // ================= RENDERIZADO DE RUTAS 3D Y PARADAS EN MAPLIBRE =================
     function clearRoutesFromMap() {{
       activeRouteLayerIds.forEach(id => {{
         if (map.getLayer(id)) map.removeLayer(id);
@@ -1799,58 +2484,68 @@ def create_map_visualization(
       }});
       activeRouteLayerIds = [];
       activeRouteSourceIds = [];
-      ['stops-label', 'stops-circle', 'depot-label', 'depot-circle'].forEach(id => {{
-        if (map.getLayer(id)) map.removeLayer(id);
-      }});
-      ['stops-source', 'depot-source'].forEach(id => {{
-        if (map.getSource(id)) map.removeSource(id);
-      }});
+      stopAssignmentMap = {{}};
       document.getElementById('twcvrp-routes-container').innerHTML =
-        '<p class="twcvrp-hint" style="margin:6px 0;">Aún no hay rutas calculadas. Presiona <b>Calcular Rutas en el Mapa</b>.</p>';
+        '<p style="margin:6px 0;color:var(--text-muted);font-size:11.5px;">Aún no hay rutas trazadas. Presiona <b>Calcular Rutas en el Mapa</b>.</p>';
     }}
 
-    function renderSolvedRoutesOnMap(mapData, reportData) {{
+    function add3DBuildingsLayer() {{
+      const layers = map.getStyle().layers || [];
+      let labelLayerId = undefined;
+      for (let i = 0; i < layers.length; i++) {{
+        if (layers[i].type === 'symbol' && layers[i].layout && layers[i].layout['text-field']) {{
+          labelLayerId = layers[i].id;
+          break;
+        }}
+      }}
+      if (map.getSource('openmaptiles') && !map.getLayer('3d-buildings')) {{
+        map.addLayer({{
+          'id': '3d-buildings',
+          'source': 'openmaptiles',
+          'source-layer': 'building',
+          'type': 'fill-extrusion',
+          'minzoom': 13,
+          'paint': {{
+            'fill-extrusion-color': '#d9dee6',
+            'fill-extrusion-height': [
+              'interpolate', ['linear'], ['zoom'],
+              13, 0,
+              14.5, ['coalesce', ['get', 'render_height'], 12]
+            ],
+            'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
+            'fill-extrusion-opacity': 0.82
+          }}
+        }}, labelLayerId);
+      }}
+    }}
+
+    function renderSolvedRoutesOnMap(mapData, reportData, shouldFitBounds = true) {{
       if (!mapLoaded) return;
       clearRoutesFromMap();
 
       const routesContainer = document.getElementById('twcvrp-routes-container');
       routesContainer.innerHTML = '';
-      searchableLocations = [];
 
-      const depotHtml =
-        `<b>${{mapData.depot.name}}</b><br>Tipo: Depósito<br>Coords: ${{mapData.depot.lat.toFixed(6)}}, ${{mapData.depot.lon.toFixed(6)}}`;
-
-      searchableLocations.push({{
-        name: mapData.depot.name + ' (Depósito)',
-        lon: mapData.depot.lon,
-        lat: mapData.depot.lat,
-        html: depotHtml
-      }});
-
-      if (!mapData.routes || mapData.routes.length === 0) {{
+      if (!mapData || !mapData.routes || mapData.routes.length === 0) {{
         routesContainer.innerHTML =
-          '<p class="twcvrp-hint" style="margin:6px 0;">Presiona <b>Calcular Rutas en el Mapa</b> en el panel izquierdo para trazar las rutas óptimas.</p>';
-        renderDraftMarkers();
+          '<p style="margin:6px 0;color:var(--text-muted);font-size:11.5px;">Presiona <b>Calcular Rutas en el Mapa</b> para trazar las rutas óptimas.</p>';
+        renderMapMarkers();
         return;
       }}
 
-      // Ocultar marcadores de borrador cuando hay rutas solucionadas activas (o mantenerlos sincronizados)
-      draftMarkers.forEach(m => m.remove());
-      draftMarkers = [];
-
-      const bounds = new maplibregl.LngLatBounds();
-      bounds.extend([mapData.depot.lon, mapData.depot.lat]);
-      const stopFeatures = [];
-
       mapData.routes.forEach((route) => {{
         const vid = route.display_id;
-        vehicleVisibility[vid] = true;
+        if (vehicleVisibility[vid] === undefined) vehicleVisibility[vid] = true;
 
         const sourceId = `route-source-${{vid}}`;
         const casingLayerId = `route-casing-${{vid}}`;
         const lineLayerId = `route-line-${{vid}}`;
 
-        route.coordinates.forEach(coord => bounds.extend(coord));
+        const stopsSummary = [
+          mapData.depot.name,
+          ...(route.stops || []).map(s => s.name),
+          ...(CONFIG.depot_return_required !== false ? [mapData.depot.name] : [])
+        ].join(' → ');
 
         map.addSource(sourceId, {{
           type: 'geojson',
@@ -1858,8 +2553,13 @@ def create_map_visualization(
             type: 'Feature',
             properties: {{
               vehicle_id: vid,
+              color: route.color,
               total_time: route.total_time_str,
-              total_load: route.total_load
+              total_distance_km: route.total_distance_km ?? '',
+              total_load: route.total_load,
+              vehicle_capacity: route.vehicle_capacity ?? CONFIG.vehicle_capacity ?? '',
+              num_stops: (route.stops || []).length,
+              stops_summary: stopsSummary
             }},
             geometry: {{
               type: 'LineString',
@@ -1873,11 +2573,15 @@ def create_map_visualization(
           id: casingLayerId,
           type: 'line',
           source: sourceId,
-          layout: {{ 'line-join': 'round', 'line-cap': 'round' }},
+          layout: {{
+            'line-join': 'round',
+            'line-cap': 'round',
+            'visibility': vehicleVisibility[vid] ? 'visible' : 'none'
+          }},
           paint: {{
             'line-color': '#ffffff',
             'line-width': 8,
-            'line-opacity': 0.9
+            'line-opacity': 0.92
           }}
         }});
         activeRouteLayerIds.push(casingLayerId);
@@ -1886,7 +2590,11 @@ def create_map_visualization(
           id: lineLayerId,
           type: 'line',
           source: sourceId,
-          layout: {{ 'line-join': 'round', 'line-cap': 'round' }},
+          layout: {{
+            'line-join': 'round',
+            'line-cap': 'round',
+            'visibility': vehicleVisibility[vid] ? 'visible' : 'none'
+          }},
           paint: {{
             'line-color': route.color,
             'line-width': 5,
@@ -1895,119 +2603,60 @@ def create_map_visualization(
         }});
         activeRouteLayerIds.push(lineLayerId);
 
-        map.on('click', lineLayerId, (e) => {{
-          new maplibregl.Popup()
-            .setLngLat(e.lngLat)
-            .setHTML(
-              `<b>Vehículo ${{vid}}</b><br>Tiempo total: ${{route.total_time_str}}<br>Carga total: ${{route.total_load}}`
-            )
-            .addTo(map);
-        }});
-        map.on('mouseenter', lineLayerId, () => {{ map.getCanvas().style.cursor = 'pointer'; }});
-        map.on('mouseleave', lineLayerId, () => {{ map.getCanvas().style.cursor = ''; }});
+        // Tarjeta expandible de ruta en el panel derecho
+        const cardEl = document.createElement('div');
+        cardEl.className = 'vrp-route-card';
+        const stopsHtml = (route.stops || []).map(st => `
+          <div class="vrp-stop-step" data-lat="${{st.lat}}" data-lon="${{st.lon}}" data-idx="${{st.node_index || 0}}">
+            <span><b>#${{st.sequence}}</b> ${{st.name}}</span>
+            <span style="color:var(--text-muted);">${{st.arrival}} • Dem: ${{st.demand}}</span>
+          </div>
+        `).join('');
 
-        // Agregar fila en la leyenda derecha
-        const itemEl = document.createElement('div');
-        itemEl.className = 'twcvrp-route-item';
-        itemEl.setAttribute('data-vehicle-id', vid);
-        itemEl.innerHTML = `
-          <span class="twcvrp-dot" style="background:${{route.color}}"></span>
-          <span>Vehículo ${{vid}}</span>
-          <span class="twcvrp-meta">${{route.stops.length}} paradas • ${{route.total_time_str}}</span>
-          <button class="twcvrp-eye" data-vehicle-id="${{vid}}" title="Ocultar">
-            <i class="fa fa-eye"></i>
-          </button>
+        cardEl.innerHTML = `
+          <div class="vrp-route-header">
+            <span class="twcvrp-dot" style="background:${{route.color}}"></span>
+            <span>Vehículo ${{vid}}</span>
+            <span class="twcvrp-meta">${{route.stops.length}} paradas • ${{route.total_time_str}} • Carga: ${{route.total_load}}</span>
+            <button class="vrp-icon-btn twcvrp-eye" data-vehicle-id="${{vid}}" title="Mostrar / Ocultar ruta" style="padding:2px 6px;">
+              <i class="fa ${{vehicleVisibility[vid] ? 'fa-eye' : 'fa-eye-slash'}}"></i>
+            </button>
+          </div>
+          <div class="vrp-route-stops-drawer">
+            <div class="vrp-stop-step" data-lat="${{mapData.depot.lat}}" data-lon="${{mapData.depot.lon}}" data-idx="0">
+              <span><b>Salida:</b> ${{mapData.depot.name}}</span>
+              <span style="color:var(--text-muted);">Depósito</span>
+            </div>
+            ${{stopsHtml}}
+          </div>
         `;
-        routesContainer.appendChild(itemEl);
 
-        route.stops.forEach((stop) => {{
-          bounds.extend([stop.lon, stop.lat]);
-          const popupHtml = `
-            <b>Vehículo ${{vid}} - Parada ${{stop.sequence}}</b><br>
-            <b>${{stop.name}}</b><br>
-            Llegada: ${{stop.arrival}}<br>
-            Tiempo de servicio: ${{stop.service_time}} min<br>
-            Salida: ${{stop.departure}}<br>
-            Demanda: ${{stop.demand}}
-          `;
-          stopFeatures.push({{
-            type: 'Feature',
-            properties: {{ vid: vid, seq: String(stop.sequence), color: route.color, html: popupHtml }},
-            geometry: {{ type: 'Point', coordinates: [stop.lon, stop.lat] }}
-          }});
-          searchableLocations.push({{
-            name: `${{stop.name}} (Vehículo ${{vid}} - Parada ${{stop.sequence}})`,
-            lon: stop.lon,
-            lat: stop.lat,
-            html: popupHtml
+        cardEl.querySelector('.vrp-route-header').addEventListener('click', (e) => {{
+          if (e.target.closest('.twcvrp-eye')) return;
+          cardEl.classList.toggle('expanded');
+          // Encuadrar ruta de este vehículo
+          const rb = new maplibregl.LngLatBounds();
+          (route.coordinates || []).forEach(c => rb.extend(c));
+          if (!rb.isEmpty()) {{
+            map.fitBounds(rb, {{ padding: getMapPadding(), maxZoom: 16, pitch: is3D ? 55 : 0, duration: 900 }});
+          }}
+        }});
+
+        cardEl.querySelectorAll('.vrp-stop-step').forEach(stepEl => {{
+          stepEl.addEventListener('click', () => {{
+            const idx = parseInt(stepEl.getAttribute('data-idx'), 10);
+            if (!Number.isNaN(idx) && LOCATIONS[idx]) {{
+              focusLocationOnMap(idx);
+            }}
           }});
         }});
-      }});
 
-      map.addSource('stops-source', {{
-        type: 'geojson',
-        data: {{ type: 'FeatureCollection', features: stopFeatures }}
-      }});
-      map.addLayer({{
-        id: 'stops-circle',
-        type: 'circle',
-        source: 'stops-source',
-        paint: {{
-          'circle-radius': 11,
-          'circle-color': '#ffffff',
-          'circle-stroke-color': ['get', 'color'],
-          'circle-stroke-width': 2.5
-        }}
-      }});
-      map.addLayer({{
-        id: 'stops-label',
-        type: 'symbol',
-        source: 'stops-source',
-        layout: {{
-          'text-field': ['get', 'seq'],
-          'text-font': ['Noto Sans Bold'],
-          'text-size': 12,
-          'text-allow-overlap': true,
-          'text-ignore-placement': true
-        }},
-        paint: {{ 'text-color': ['get', 'color'] }}
-      }});
-
-      map.addSource('depot-source', {{
-        type: 'geojson',
-        data: {{
-          type: 'Feature',
-          properties: {{ html: depotHtml }},
-          geometry: {{ type: 'Point', coordinates: [mapData.depot.lon, mapData.depot.lat] }}
-        }}
-      }});
-      map.addLayer({{
-        id: 'depot-circle',
-        type: 'circle',
-        source: 'depot-source',
-        paint: {{
-          'circle-radius': 14,
-          'circle-color': '#111111',
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 3
-        }}
-      }});
-      map.addLayer({{
-        id: 'depot-label',
-        type: 'symbol',
-        source: 'depot-source',
-        layout: {{
-          'text-field': 'D',
-          'text-font': ['Noto Sans Bold'],
-          'text-size': 13,
-          'text-allow-overlap': true,
-          'text-ignore-placement': true
-        }},
-        paint: {{ 'text-color': '#ffffff' }}
+        routesContainer.appendChild(cardEl);
       }});
 
       routesContainer.querySelectorAll('.twcvrp-eye[data-vehicle-id]').forEach(btn => {{
-        btn.addEventListener('click', function() {{
+        btn.addEventListener('click', function(e) {{
+          e.stopPropagation();
           const vid = parseInt(this.getAttribute('data-vehicle-id'), 10);
           setVehicleVisible(vid, !vehicleVisibility[vid]);
         }});
@@ -2025,10 +2674,63 @@ def create_map_visualization(
         document.getElementById('kpi-cost').textContent = `$${{Number(cost).toLocaleString('es-MX', {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }})}}`;
       }}
 
-      if (!bounds.isEmpty()) {{
-        map.fitBounds(bounds, {{ padding: 90, pitch: is3D ? 55 : 0, bearing: is3D ? -15 : 0, duration: 1200 }});
+      renderPointsList();
+      renderMapMarkers();
+
+      if (shouldFitBounds) {{
+        fitMapToLocations();
       }}
     }}
+
+    // Listener global único para clics sobre puntos o líneas de ruta
+    map.on('click', (e) => {{
+      if (mapClickAddMode) return;
+
+      // 1. Prioridad: si se hace clic en un punto (Depósito o Parada), mostrar información del punto
+      const pointLayers = ['vrp-points-circle', 'vrp-points-label'].filter(id => map.getLayer(id));
+      if (pointLayers.length > 0) {{
+        const hitPoints = map.queryRenderedFeatures(e.point, {{ layers: pointLayers }});
+        if (hitPoints.length > 0) {{
+          const idx = hitPoints[0].properties.idx;
+          const loc = LOCATIONS[idx];
+          if (loc) {{
+            if (activePopup) activePopup.remove();
+            activePopup = new maplibregl.Popup({{ offset: 14 }})
+              .setLngLat([Number(loc.Longitud), Number(loc.Latitud)])
+              .setHTML(buildPopupHtml(loc, idx))
+              .addTo(map);
+          }}
+          return;
+        }}
+      }}
+
+      // 2. Si se hace clic en una ruta, mostrar información de la ruta
+      const existingRouteLayers = activeRouteLayerIds.filter(id => map.getLayer(id));
+      if (!existingRouteLayers.length) return;
+      const hitRoutes = map.queryRenderedFeatures(e.point, {{ layers: existingRouteLayers }});
+      if (!hitRoutes.length) return;
+      const props = hitRoutes[0].properties;
+      if (activePopup) activePopup.remove();
+      activePopup = new maplibregl.Popup({{ offset: 10 }})
+        .setLngLat(e.lngLat)
+        .setHTML(buildRoutePopupHtml(props))
+        .addTo(map);
+    }});
+
+    // Cursor pointer al pasar sobre un punto o sobre una ruta
+    map.on('mousemove', (e) => {{
+      if (mapClickAddMode) return;
+      const interactiveLayers = [
+        ...['vrp-points-circle', 'vrp-points-label'].filter(id => map.getLayer(id)),
+        ...activeRouteLayerIds.filter(id => map.getLayer(id))
+      ];
+      if (!interactiveLayers.length) {{
+        map.getCanvas().style.cursor = '';
+        return;
+      }}
+      const hits = map.queryRenderedFeatures(e.point, {{ layers: interactiveLayers }});
+      map.getCanvas().style.cursor = hits.length > 0 ? 'pointer' : '';
+    }});
 
     // ================= EJECUTAR OPTIMIZACIÓN (/api/solve) =================
     const btnSolve = document.getElementById('btn-run-solver');
@@ -2042,8 +2744,8 @@ def create_map_visualization(
 
       CONFIG = readConfigFromInputs();
       btnSolve.disabled = true;
-      lblSolve.textContent = 'Optimizando rutas con OR-Tools...';
-      setStatus('Calculando matriz vial y resolviendo VRP...', '');
+      lblSolve.textContent = 'Optimizando rutas...';
+      setStatus('Calculando matriz vial y resolviendo VRP con OR-Tools...', '');
 
       try {{
         const resp = await fetch(`${{API_BASE}}/api/solve`, {{
@@ -2066,76 +2768,199 @@ def create_map_visualization(
         REPORT = result.report;
         if (result.locations) {{
           LOCATIONS = result.locations;
-          renderPointsList();
         }}
         setMapClickMode(false);
-        renderSolvedRoutesOnMap(MAP_DATA, REPORT);
+        markRoutesDirty(false);
+        renderSolvedRoutesOnMap(MAP_DATA, REPORT, true);
         setStatus(result.message, 'success');
       }} catch (err) {{
-        setStatus('No se pudo conectar con el servidor local (ejecuta: python app.py).', 'error');
+        try {{
+          await solveInBrowserFallback();
+        }} catch (fallbackErr) {{
+          setStatus('Error al calcular rutas: ' + (fallbackErr.message || fallbackErr), 'error');
+        }}
       }} finally {{
         btnSolve.disabled = false;
         lblSolve.textContent = 'Calcular Rutas en el Mapa';
       }}
     }});
 
-    function setStatus(text, type) {{
-      const el = document.getElementById('vrp-status-msg');
-      el.textContent = text;
-      el.className = 'vrp-status-msg' + (type ? ' ' + type : '');
-    }}
+    async function solveInBrowserFallback() {{
+      normalizeLocationsOrder();
+      const cfg = readConfigFromInputs();
+      const depot = LOCATIONS[0];
+      const customers = LOCATIONS.slice(1);
+      const totalDemand = customers.reduce((s, c) => s + (parseInt(c.Demanda, 10) || 0), 0);
+      const totalCap = cfg.num_vehicles * cfg.vehicle_capacity;
+      if (totalCap < totalDemand) {{
+        setStatus(`Capacidad total (${{totalCap}}) menor que demanda (${{totalDemand}}). Aumenta vehículos o capacidad.`, 'error');
+        return;
+      }}
 
-    // ================= CARGA DEL MAPA 3D =================
-    map.on('load', () => {{
-      mapLoaded = true;
-      const layers = map.getStyle().layers || [];
-      let labelLayerId = undefined;
-      for (let i = 0; i < layers.length; i++) {{
-        if (layers[i].type === 'symbol' && layers[i].layout && layers[i].layout['text-field']) {{
-          labelLayerId = layers[i].id;
-          break;
+      const COLORS = ['#2563EB', '#EA580C', '#16A34A', '#9333EA', '#E11D48', '#0891B2', '#D97706', '#4F46E5'];
+      const toMin = (str) => {{
+        const parts = String(str || '08:00').split(':').map(Number);
+        return (parts[0] || 0) * 60 + (parts[1] || 0);
+      }};
+      const fmtMin = (m) => `${{String(Math.floor(m / 60)).padStart(2, '0')}}:${{String(Math.round(m % 60)).padStart(2, '0')}}`;
+
+      const coordsQuery = LOCATIONS.map(l => `${{Number(l.Longitud).toFixed(6)}},${{Number(l.Latitud).toFixed(6)}}`).join(';');
+      let osrmBase = 'http://localhost:5000';
+      let tableData = null;
+      for (const base of ['http://localhost:5000', 'https://router.project-osrm.org']) {{
+        try {{
+          const r = await fetch(`${{base}}/table/v1/driving/${{coordsQuery}}?annotations=duration,distance`);
+          if (r.ok) {{
+            const j = await r.json();
+            if (j.code === 'Ok') {{
+              tableData = j;
+              osrmBase = base;
+              break;
+            }}
+          }}
+        }} catch (_) {{}}
+      }}
+
+      if (!tableData) {{
+        throw new Error('No se pudo conectar a OSRM para obtener tiempos de calle.');
+      }}
+
+      const timeMat = tableData.durations.map(row => row.map(s => Math.max(0, Math.round((s || 0) / 60))));
+      const distMat = tableData.distances.map(row => row.map(d => Number(((d || 0) / 1000).toFixed(2))));
+
+      const unvisited = new Set(customers.map((_, i) => i + 1));
+      const routesOut = [];
+      let totalDistKm = 0;
+      let totalTimeMin = 0;
+
+      for (let v = 0; v < cfg.num_vehicles && unvisited.size > 0; v++) {{
+        let curr = 0;
+        let load = 0;
+        let currTime = toMin(depot.Horario_Inicio || '07:00');
+        const seqNodes = [0];
+        const stopsPayload = [];
+        let routeTime = 0;
+
+        while (unvisited.size > 0) {{
+          let bestNode = -1;
+          let bestCost = Infinity;
+          for (const cand of unvisited) {{
+            const dem = parseInt(LOCATIONS[cand].Demanda, 10) || 0;
+            if (load + dem > cfg.vehicle_capacity) continue;
+            const travel = timeMat[curr][cand] || 1;
+            const arr = Math.max(currTime + travel, toMin(LOCATIONS[cand].Horario_Inicio));
+            if (cfg.problem_type !== 'CVRP' && arr > toMin(LOCATIONS[cand].Horario_Fin)) continue;
+            if (travel < bestCost) {{
+              bestCost = travel;
+              bestNode = cand;
+            }}
+          }}
+          if (bestNode === -1) break;
+          unvisited.delete(bestNode);
+          const travel = timeMat[curr][bestNode] || 1;
+          totalDistKm += distMat[curr][bestNode] || 0;
+          routeTime += travel + cfg.service_time;
+          const arr = Math.max(currTime + travel, toMin(LOCATIONS[bestNode].Horario_Inicio));
+          const dep = arr + cfg.service_time;
+          load += parseInt(LOCATIONS[bestNode].Demanda, 10) || 0;
+          currTime = dep;
+          curr = bestNode;
+          seqNodes.push(bestNode);
+
+          stopsPayload.push({{
+            sequence: stopsPayload.length + 1,
+            node_index: bestNode,
+            name: LOCATIONS[bestNode].Nombre,
+            lat: Number(LOCATIONS[bestNode].Latitud),
+            lon: Number(LOCATIONS[bestNode].Longitud),
+            arrival: fmtMin(arr),
+            service_time: cfg.service_time,
+            departure: fmtMin(dep),
+            demand: parseInt(LOCATIONS[bestNode].Demanda, 10) || 0,
+            vehicle_display_id: v + 1,
+            color: COLORS[v % COLORS.length]
+          }});
+        }}
+
+        if (stopsPayload.length > 0) {{
+          if (cfg.depot_return_required) {{
+            routeTime += timeMat[curr][0] || 0;
+            totalDistKm += distMat[curr][0] || 0;
+            seqNodes.push(0);
+          }}
+          totalTimeMin += routeTime;
+
+          const wpQuery = seqNodes.map(n => `${{Number(LOCATIONS[n].Longitud).toFixed(6)}},${{Number(LOCATIONS[n].Latitud).toFixed(6)}}`).join(';');
+          let polyCoords = seqNodes.map(n => [Number(LOCATIONS[n].Longitud), Number(LOCATIONS[n].Latitud)]);
+          try {{
+            const rr = await fetch(`${{osrmBase}}/route/v1/driving/${{wpQuery}}?overview=full&geometries=geojson`);
+            if (rr.ok) {{
+              const rj = await rr.json();
+              if (rj.routes && rj.routes[0] && rj.routes[0].geometry) {{
+                polyCoords = rj.routes[0].geometry.coordinates;
+              }}
+            }}
+          }} catch (_) {{}}
+
+          routesOut.push({{
+            vehicle_id: v,
+            display_id: v + 1,
+            color: COLORS[v % COLORS.length],
+            total_time_str: fmtMin(routeTime),
+            total_load: load,
+            coordinates: polyCoords,
+            stops: stopsPayload
+          }});
         }}
       }}
 
-      if (map.getSource('openmaptiles') && !map.getLayer('3d-buildings')) {{
-        map.addLayer({{
-          'id': '3d-buildings',
-          'source': 'openmaptiles',
-          'source-layer': 'building',
-          'type': 'fill-extrusion',
-          'minzoom': 13,
-          'paint': {{
-            'fill-extrusion-color': '#d9dee6',
-            'fill-extrusion-height': [
-              'interpolate', ['linear'], ['zoom'],
-              13, 0,
-              14.5, ['coalesce', ['get', 'render_height'], 12]
-            ],
-            'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
-            'fill-extrusion-opacity': 0.82
-          }}
-        }}, labelLayerId);
-      }}
+      const totalCost = (totalDistKm * 3.24) + ((totalTimeMin / 60) * 81.25) + (routesOut.length * 34.38);
+      MAP_DATA = {{
+        center: [Number(depot.Longitud), Number(depot.Latitud)],
+        depot: {{ name: depot.Nombre, lat: Number(depot.Latitud), lon: Number(depot.Longitud) }},
+        routes: routesOut
+      }};
+      REPORT = {{
+        summary: {{
+          total_vehicles_used: routesOut.length,
+          total_vehicles_available: cfg.num_vehicles,
+          total_stops_served: customers.length - unvisited.size,
+          total_time_minutes: totalTimeMin,
+          total_distance_km: Number(totalDistKm.toFixed(2)),
+          cost_analysis: {{ total_cost: Number(totalCost.toFixed(2)) }}
+        }}
+      }};
+      setMapClickMode(false);
+      markRoutesDirty(false);
+      renderSolvedRoutesOnMap(MAP_DATA, REPORT, true);
+      setStatus(`¡Rutas calculadas! ${{routesOut.length}} vehículo(s) utilizado(s).`, 'success');
+    }}
 
-      ['stops-circle', 'depot-circle'].forEach((layerId) => {{
-        map.on('click', layerId, (e) => {{
-          if (mapClickAddMode) return;
-          const f = e.features[0];
-          new maplibregl.Popup({{ offset: 14 }})
-            .setLngLat(f.geometry.coordinates)
-            .setHTML(f.properties.html)
-            .addTo(map);
-        }});
-        map.on('mouseenter', layerId, () => {{ if (!mapClickAddMode) map.getCanvas().style.cursor = 'pointer'; }});
-        map.on('mouseleave', layerId, () => {{ if (!mapClickAddMode) map.getCanvas().style.cursor = ''; }});
-      }});
-
+    // ================= CARGA Y CAMBIO DE ESTILO DEL MAPA 3D =================
+    map.on('load', () => {{
+      mapLoaded = true;
+      add3DBuildingsLayer();
       if (MAP_DATA.routes && MAP_DATA.routes.length > 0) {{
-        renderSolvedRoutesOnMap(MAP_DATA, REPORT);
+        renderSolvedRoutesOnMap(MAP_DATA, REPORT, true);
       }} else {{
-        renderDraftMarkers();
+        renderMapMarkers();
         fitMapToLocations();
       }}
+    }});
+
+    document.getElementById('select-map-style').addEventListener('change', (e) => {{
+      const newStyle = e.target.value;
+      map.setStyle(newStyle);
+      map.once('styledata', () => {{
+        setTimeout(() => {{
+          add3DBuildingsLayer();
+          if (MAP_DATA.routes && MAP_DATA.routes.length > 0) {{
+            renderSolvedRoutesOnMap(MAP_DATA, REPORT, false);
+          }} else {{
+            renderMapMarkers();
+          }}
+        }}, 250);
+      }});
     }});
 
     // ================= VISIBILIDAD DE VEHÍCULOS Y CONTROLES 3D =================
@@ -2147,19 +2972,12 @@ def create_map_visualization(
           map.setLayoutProperty(layerId, 'visibility', visValue);
         }}
       }});
-      if (map.getLayer('stops-circle')) {{
-        const visibleIds = Object.keys(vehicleVisibility)
-          .filter(k => vehicleVisibility[k])
-          .map(k => parseInt(k, 10));
-        const filter = ['in', ['get', 'vid'], ['literal', visibleIds]];
-        map.setFilter('stops-circle', filter);
-        map.setFilter('stops-label', filter);
-      }}
       const btn = document.querySelector(`.twcvrp-eye[data-vehicle-id="${{vid}}"]`);
       if (btn) {{
         btn.innerHTML = visible ? '<i class="fa fa-eye"></i>' : '<i class="fa fa-eye-slash"></i>';
         btn.title = visible ? 'Ocultar' : 'Mostrar';
       }}
+      renderMapMarkers();
     }}
 
     document.getElementById('twcvrp-eye-all').addEventListener('click', function() {{
@@ -2170,13 +2988,13 @@ def create_map_visualization(
       if (label) label.textContent = target ? 'Ocultar todas' : 'Ver todas';
     }});
 
-    let is3D = true;
     document.getElementById('twcvrp-toggle-pitch').addEventListener('click', function() {{
       is3D = !is3D;
+      document.getElementById('lbl-toggle-pitch').textContent = is3D ? 'Vista 3D' : 'Vista 2D';
       map.easeTo({{
-        pitch: is3D ? 60 : 0,
-        bearing: is3D ? -20 : 0,
-        duration: 800
+        pitch: is3D ? 58 : 0,
+        bearing: is3D ? -15 : 0,
+        duration: 750
       }});
     }});
 
@@ -2196,7 +3014,7 @@ def create_map_visualization(
     const legendToggle = document.getElementById('twcvrp-legend-toggle');
     document.getElementById('twcvrp-legend-close').addEventListener('click', () => {{
       legendPanel.classList.remove('open');
-      legendToggle.style.display = 'block';
+      legendToggle.style.display = 'inline-flex';
     }});
     legendToggle.addEventListener('click', () => {{
       legendPanel.classList.add('open');
@@ -2213,7 +3031,7 @@ def create_map_visualization(
       }});
     }});
 
-    // ================= BUSCADOR DE PARADAS CON FLYTO =================
+    // ================= BUSCADOR EN TIEMPO REAL CON FLYTO =================
     const searchInput = document.getElementById('twcvrp-search-input');
     const searchResults = document.getElementById('twcvrp-search-results');
 
@@ -2224,38 +3042,34 @@ def create_map_visualization(
         searchResults.style.display = 'none';
         return;
       }}
-      const pool = searchableLocations.length > 0
-        ? searchableLocations
-        : LOCATIONS.map((l, idx) => ({{
-            name: `${{l.Nombre}} (${{idx === 0 ? 'Depósito' : l.Tipo_Servicio}})`,
-            lon: l.Longitud,
-            lat: l.Latitud,
-            html: `<b>${{l.Nombre}}</b><br>Coords: ${{l.Latitud}}, ${{l.Longitud}}`
-          }}));
 
-      const matches = pool.filter(loc => loc.name.toLowerCase().includes(q));
+      const matches = LOCATIONS
+        .map((l, idx) => ({{ loc: l, idx }}))
+        .filter(item => {{
+          const assigned = stopAssignmentMap[item.idx];
+          const text = `${{item.loc.Nombre}} ${{item.idx === 0 ? 'deposito' : item.loc.Tipo_Servicio}} ${{assigned ? 'vehiculo ' + assigned.vehicle_display_id : ''}}`.toLowerCase();
+          return text.includes(q);
+        }});
+
       if (!matches.length) {{
         searchResults.style.display = 'none';
         return;
       }}
-      matches.forEach(loc => {{
+
+      matches.forEach(({{ loc, idx }}) => {{
+        const assigned = stopAssignmentMap[idx];
         const item = document.createElement('div');
         item.className = 'twcvrp-search-item';
-        item.textContent = loc.name;
+        item.innerHTML = `
+          <span><b>${{loc.Nombre}}</b></span>
+          <span style="color:var(--text-muted);font-size:11px;">
+            ${{idx === 0 ? 'Depósito' : (assigned ? `Vehículo ${{assigned.vehicle_display_id}} (#${{assigned.sequence}})` : loc.Tipo_Servicio)}}
+          </span>
+        `;
         item.addEventListener('click', () => {{
           searchResults.style.display = 'none';
-          searchInput.value = loc.name;
-          map.flyTo({{
-            center: [loc.lon, loc.lat],
-            zoom: 17.5,
-            pitch: is3D ? 60 : 0,
-            bearing: is3D ? -15 : 0,
-            duration: 1400
-          }});
-          new maplibregl.Popup({{ offset: 14 }})
-            .setLngLat([loc.lon, loc.lat])
-            .setHTML(loc.html)
-            .addTo(map);
+          searchInput.value = loc.Nombre;
+          focusLocationOnMap(idx);
         }});
         searchResults.appendChild(item);
       }});
