@@ -17,35 +17,45 @@ logging.basicConfig(level=logging.INFO)
 SEPARATOR = "=" * 60
 
 
-def check_and_generate_matrix(json_path: str, service_choice: Optional[str] = None) -> None:
+def check_and_generate_matrix(
+    json_path: str,
+    service_choice: Optional[str] = None,
+    force_regenerate: bool = False,
+) -> None:
     """
     Verifica si el archivo de matriz existe.
-    Si no existe, genera la matriz usando ORS o HERE.
+    Si no existe (o force_regenerate es True), genera la matriz usando OSRM local, ORS o HERE.
     
     Args:
         json_path: Ruta al archivo JSON de la matriz.
-        service_choice: "ors" o "here". Si None, se pedirá al usuario.
+        service_choice: "osrm", "ors" o "here". Si None, se pedirá al usuario.
+        force_regenerate: Si True, recalcula la matriz aunque el archivo ya exista.
     """
-    if os.path.exists(json_path):
+    if os.path.exists(json_path) and not force_regenerate:
         return
 
-    logging.warning(f"El archivo de datos '{json_path}' no existe.")
+    if not os.path.exists(json_path):
+        logging.warning(f"El archivo de datos '{json_path}' no existe.")
+    else:
+        logging.info(f"Regenerando matriz en '{json_path}'...")
 
     if not service_choice:
-
-        choice = input("Ingresa 1 para ORS o 2 para HERE: ").strip()
+        choice = input("Ingresa 1 para OSRM Local (Docker), 2 para ORS o 3 para HERE [1]: ").strip() or "1"
 
         if choice == "1":
-            service_choice = "ors"
+            service_choice = "osrm"
         elif choice == "2":
+            service_choice = "ors"
+        elif choice == "3":
             service_choice = "here"
         else:
             logging.error("Opción inválida.")
             sys.exit(1)
 
     script_map = {
+        "osrm": "src/generate_osrm_matrix.py",
         "ors": "src/generate_ors_matrix.py",
-        "here": "src/generate_here_matrix.py"
+        "here": "src/generate_here_matrix.py",
     }
 
     script_to_run = script_map.get(service_choice.lower())
@@ -54,8 +64,14 @@ def check_and_generate_matrix(json_path: str, service_choice: Optional[str] = No
         sys.exit(1)
 
     logging.info(f"\nEjecutando el script de generación: '{script_to_run}'...")
+    cmd = [sys.executable, script_to_run]
+    if service_choice.lower() == "osrm":
+        cmd.extend(["--output_json", json_path])
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.getcwd()
+
     try:
-        subprocess.run([sys.executable, script_to_run], check=True)
+        subprocess.run(cmd, check=True, env=env)
         logging.info("Script de generación completado.")
     except subprocess.CalledProcessError as e:
         logging.error(f"Error al ejecutar el script '{script_to_run}': {e}")
@@ -134,13 +150,19 @@ def main() -> None:
     parser.add_argument(
         "--service",
         type=str,
-        choices=["ors", "here"],
-        help="Servicio a usar para generar la matriz en caso de no existir."
+        choices=["osrm", "ors", "here"],
+        default="osrm",
+        help="Servicio a usar para generar la matriz (por defecto: osrm local en Docker)."
+    )
+    parser.add_argument(
+        "--force_matrix",
+        action="store_true",
+        help="Fuerza el recálculo de la matriz aunque el archivo JSON ya exista."
     )
     args = parser.parse_args()
 
     # Validar archivo de matriz
-    check_and_generate_matrix(args.json_path, args.service)
+    check_and_generate_matrix(args.json_path, args.service, force_regenerate=args.force_matrix)
 
     # Directorio de salida
     output_dir = prepare_output_dir()

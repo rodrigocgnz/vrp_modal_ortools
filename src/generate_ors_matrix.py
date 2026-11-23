@@ -185,11 +185,11 @@ def generar_pickup_delivery_pairs(df_valid):
             delivery_time_window = (60, 600)  # Default: 1:00-10:00
             
             if "Horario_Inicio" in df_valid.columns and "Horario_Fin" in df_valid.columns:
-                # Convertir horarios a minutos desde medianoche
-                pickup_start = horario_a_horas(df_valid.loc[pickup_idx, "Horario_Inicio"]) * 60
-                pickup_end = horario_a_horas(df_valid.loc[pickup_idx, "Horario_Fin"]) * 60
-                delivery_start = horario_a_horas(df_valid.loc[delivery_idx, "Horario_Inicio"]) * 60
-                delivery_end = horario_a_horas(df_valid.loc[delivery_idx, "Horario_Fin"]) * 60
+                # horario_a_horas ya devuelve minutos desde medianoche
+                pickup_start = horario_a_horas(df_valid.loc[pickup_idx, "Horario_Inicio"])
+                pickup_end = horario_a_horas(df_valid.loc[pickup_idx, "Horario_Fin"])
+                delivery_start = horario_a_horas(df_valid.loc[delivery_idx, "Horario_Inicio"])
+                delivery_end = horario_a_horas(df_valid.loc[delivery_idx, "Horario_Fin"])
                 
                 pickup_time_window = (int(pickup_start), int(pickup_end))
                 delivery_time_window = (int(delivery_start), int(delivery_end))

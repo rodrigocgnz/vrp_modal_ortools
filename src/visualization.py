@@ -1,10 +1,14 @@
 import folium
 from folium.plugins import Search
+import logging
+import os
 import requests
 import random
 import threading
 import time
 import sys
+
+DEFAULT_OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "http://localhost:5000")
 
 class _TokenBucketRateLimiter:
     """Thread-safe token bucket rate limiter."""
@@ -40,15 +44,79 @@ class _TokenBucketRateLimiter:
             self._cond.notify_all()
 
 class OSRMClient:
-    """Parallel OSRM client for fetching route polylines."""
-    def __init__(self, base_url="http://router.project-osrm.org", profile="driving", max_workers=8, timeout=15, max_retries=4):
-        self.base_url = base_url.rstrip("/")
+    """OSRM client for fetching street-level route polylines from local OSRM in Docker."""
+    def __init__(self, base_url=None, profile="driving", max_workers=8, timeout=15, max_retries=3):
+        resolved_url = base_url or DEFAULT_OSRM_BASE_URL
+        self.base_url = resolved_url.rstrip("/")
         self.profile = profile
         self.max_workers = max(1, int(max_workers))
         self.timeout = float(timeout)
         self.max_retries = max(0, int(max_retries))
-        self._limiter = _TokenBucketRateLimiter()
+        self._limiter = _TokenBucketRateLimiter(rate_per_second=50.0, burst=50, max_concurrent=max_workers)
         self._session = requests.Session()
+
+    def fetch_full_route(self, stops_coords):
+        """
+        Obtiene la geometría completa siguiendo las calles para todas las paradas de un vehículo
+        en una sola llamada a /route/v1/{profile}/ en OSRM local.
+        stops_coords: lista de [lat, lon] en orden de visita.
+        """
+        if not stops_coords or len(stops_coords) < 2:
+            return stops_coords or []
+
+        # Si hay muchas paradas (>100), procesamos por bloques solapados en 1 parada
+        max_waypoints_per_call = 90
+        if len(stops_coords) > max_waypoints_per_call:
+            combined = []
+            for start in range(0, len(stops_coords) - 1, max_waypoints_per_call - 1):
+                chunk = stops_coords[start:start + max_waypoints_per_call]
+                chunk_poly = self.fetch_full_route(chunk)
+                if not combined:
+                    combined.extend(chunk_poly)
+                else:
+                    combined.extend(chunk_poly[1:])
+            return combined
+
+        coords_str = ";".join(f"{c[1]:.6f},{c[0]:.6f}" for c in stops_coords)
+        params = {"overview": "full", "geometries": "geojson", "continue_straight": "true"}
+        url = f"{self.base_url}/route/v1/{self.profile}/{coords_str}"
+
+        for attempt in range(self.max_retries + 1):
+            self._limiter.acquire()
+            try:
+                resp = self._session.get(url, params=params, timeout=self.timeout)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("code") == "Ok" and data.get("routes"):
+                        coords = data["routes"][0].get("geometry", {}).get("coordinates", [])
+                        if coords:
+                            return [[c[1], c[0]] for c in coords]
+                logging.warning(
+                    f"OSRM route request devolvió status {resp.status_code}. Intentando por segmentos..."
+                )
+                break
+            except requests.RequestException as e:
+                if attempt >= self.max_retries:
+                    logging.warning(
+                        f"No se pudo conectar a OSRM en '{self.base_url}' ({e}). "
+                        "Se intentará por segmentos o línea recta de respaldo."
+                    )
+            finally:
+                self._limiter.release()
+            time.sleep(0.25 * (2 ** attempt))
+
+        # Respaldo tramo por tramo
+        pairs = [(stops_coords[i], stops_coords[i + 1]) for i in range(len(stops_coords) - 1)]
+        segments = self.fetch_many(pairs)
+        route_coords = []
+        for seg in segments:
+            if not seg:
+                continue
+            if not route_coords:
+                route_coords.extend(seg)
+            else:
+                route_coords.extend(seg[1:])
+        return route_coords
 
     def _fetch_one(self, start_coords, end_coords):
         params = {"overview": "full", "geometries": "geojson"}
@@ -63,12 +131,16 @@ class OSRMClient:
                         coords = data['routes'][0].get('geometry', {}).get('coordinates', [])
                         return [[c[1], c[0]] for c in coords] if coords else [start_coords, end_coords]
                 return [start_coords, end_coords]
-            except requests.RequestException:
+            except requests.RequestException as e:
                 if attempt >= self.max_retries:
+                    logging.warning(
+                        f"Fallo al obtener geometría de OSRM ({self.base_url}) para tramo "
+                        f"{start_coords} -> {end_coords}: {e}. Usando línea recta de respaldo."
+                    )
                     return [start_coords, end_coords]
             finally:
                 self._limiter.release()
-            time.sleep(0.5 * (2 ** attempt))
+            time.sleep(0.25 * (2 ** attempt))
         return [start_coords, end_coords]
 
     def fetch_many(self, pairs, label=None):
@@ -187,23 +259,9 @@ def create_map_visualization(routes, data, output_file="rutas_twcvrp_mapa.html")
         
         print(f"\nProcesando ruta del vehículo {display_id} con color {color}...")
         
-        # Crear polilínea con todas las coordenadas de la ruta
-        route_coords = []
-        segment_pairs = []
-        for i in range(len(route['stops']) - 1):
-            start_coords = route['stops'][i]['coordinates']
-            end_coords = route['stops'][i + 1]['coordinates']
-            segment_pairs.append((start_coords, end_coords))
-        
-        if segment_pairs:
-            segments_coords = osrm_client.fetch_many(segment_pairs, label=f"Vehículo {display_id}")
-            for seg_idx, segment_coords in enumerate(segments_coords):
-                if not segment_coords:
-                    continue
-                if not route_coords:
-                    route_coords.extend(segment_coords)
-                else:
-                    route_coords.extend(segment_coords[1:])  # Evitar duplicado del punto de unión
+        # Obtener polilínea siguiendo las calles reales desde OSRM local en una sola llamada por ruta
+        stops_coords = [stop['coordinates'] for stop in route['stops']]
+        route_coords = osrm_client.fetch_full_route(stops_coords) if len(stops_coords) >= 2 else []
         
         # Crear la polilínea para toda la ruta - INDENTACIÓN CORREGIDA
         if route_coords:

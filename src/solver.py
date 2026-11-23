@@ -154,10 +154,12 @@ class VRPSolver:
             self.max_wait = self.data.get("max_wait_time", self.config.max_wait_time)
 
     def _create_time_callback(self, manager: pywrapcp.RoutingIndexManager):
-        """Crea callback de tiempo incluyendo servicio y restricciones de depósito.
+        """Crea callback de tiempo incluyendo tiempo de servicio del nodo origen y restricciones de depósito.
 
         Este callback valida índices y atrapa errores de matriz para dar mensajes útiles.
         """
+        service_time = int(self.data.get("service_time", 0))
+        depot = self.data["depot"]
 
         def time_callback(from_index: int, to_index: int) -> int:
             try:
@@ -172,12 +174,13 @@ class VRPSolver:
             except IndexError:
                 raise ValueError(f"time_matrix index out of range: from {from_node} to {to_node}")
 
-            if not self.depot_return_required and to_node == self.data["depot"]:
+            if not self.depot_return_required and to_node == depot:
                 travel_time = 0
 
-            # El tiempo de servicio se aplica en el nodo de destino, no en el arco
-            # Solo agregamos el tiempo de viaje puro
-            return int(travel_time)
+            # En OR-Tools el tiempo de servicio en un cliente se suma al salir de from_node
+            # para que CumulVar(to_index) refleje la hora real de llegada al siguiente nodo.
+            node_service = 0 if from_node == depot else service_time
+            return int(travel_time) + node_service
 
         return time_callback
 

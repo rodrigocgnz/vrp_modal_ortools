@@ -485,10 +485,10 @@ def imprimir_y_guardar_resultados(time_matrix, distance_matrix, time_windows, df
         "tipo_servicio": type_service
     }
 
-    with open("data/config.json", "r", encoding="utf-8") as f:
-        config_data = json.load(f)
-
-    resultados.update(config_data)
+    if os.path.exists("data/config.json"):
+        with open("data/config.json", "r", encoding="utf-8") as f:
+            config_data = json.load(f)
+        resultados.update(config_data)
 
     # Guardar en archivo JSON
     with open('results/resultados_matrices.json', 'w', encoding='utf-8') as f:

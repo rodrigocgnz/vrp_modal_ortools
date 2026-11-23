@@ -20,6 +20,9 @@ results/
 !results/.gitkeep
 !data/example_data.csv
 
+# Datos binarios de OSRM
+osrm-data/
+
 # Archivos del sistema operativo
 .DS_Store
 Thumbs.db
