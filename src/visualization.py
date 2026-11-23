@@ -45,7 +45,7 @@ class _TokenBucketRateLimiter:
 
 class OSRMClient:
     """OSRM client for fetching street-level route polylines from local OSRM in Docker."""
-    def __init__(self, base_url=None, profile="driving", max_workers=8, timeout=15, max_retries=3):
+    def __init__(self, base_url=None, profile="driving", max_workers=8, timeout=15, max_retries=2):
         resolved_url = base_url or DEFAULT_OSRM_BASE_URL
         self.base_url = resolved_url.rstrip("/")
         self.profile = profile
@@ -54,6 +54,24 @@ class OSRMClient:
         self.max_retries = max(0, int(max_retries))
         self._limiter = _TokenBucketRateLimiter(rate_per_second=50.0, burst=50, max_concurrent=max_workers)
         self._session = requests.Session()
+        self._auto_start_attempted = False
+
+    def _ensure_local_osrm_running(self):
+        """Si apunta a localhost y OSRM no responde, ejecuta setup_osrm.ps1 automáticamente."""
+        if self._auto_start_attempted or "localhost" not in self.base_url and "127.0.0.1" not in self.base_url:
+            return False
+        self._auto_start_attempted = True
+        if not os.path.exists("setup_osrm.ps1"):
+            return False
+        logging.warning(
+            f"OSRM local no responde en '{self.base_url}'. Iniciando contenedor OSRM con 'setup_osrm.ps1'..."
+        )
+        import subprocess
+        res = subprocess.run(
+            ["powershell", "-ExecutionPolicy", "Bypass", "-File", "setup_osrm.ps1"],
+            check=False,
+        )
+        return res.returncode == 0
 
     def fetch_full_route(self, stops_coords):
         """
@@ -96,13 +114,21 @@ class OSRMClient:
                 )
                 break
             except requests.RequestException as e:
+                if not self._auto_start_attempted:
+                    self._limiter.release()
+                    if self._ensure_local_osrm_running():
+                        continue
+                    self._limiter.acquire()
                 if attempt >= self.max_retries:
                     logging.warning(
                         f"No se pudo conectar a OSRM en '{self.base_url}' ({e}). "
                         "Se intentará por segmentos o línea recta de respaldo."
                     )
             finally:
-                self._limiter.release()
+                try:
+                    self._limiter.release()
+                except ValueError:
+                    pass
             time.sleep(0.25 * (2 ** attempt))
 
         # Respaldo tramo por tramo
@@ -171,27 +197,27 @@ def create_map_visualization(routes, data, output_file="rutas_twcvrp_mapa.html")
     center_lat = sum(coord[0] for coord in all_coords) / len(all_coords)
     center_lon = sum(coord[1] for coord in all_coords) / len(all_coords)
     
-    # Crear el mapa con estilo limpio
+    # Crear el mapa con estilo minimalista y limpio (Esri Light Gray + etiquetas sutiles, sin Carto ni API Key)
     m = folium.Map(
         location=[center_lat, center_lon],
         zoom_start=12,
-        tiles='CartoDB positron'  # Estilo limpio y minimalista
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+        attr='Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ',
+        name='Minimalista Claro'
     )
-    
-    # Agregar tiles alternativos
+
+    # Capa de nombres de calles/lugares sutiles sobre el fondo minimalista
     folium.TileLayer(
-        tiles='https://stamen-tiles-{s}.a.ssl.fastly.net/toner-lite/{z}/{x}/{y}.png',
-        attr='Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
-        name='Stamen Toner Lite',
-        control=True
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+        attr='Tiles &copy; Esri',
+        name='Etiquetas',
+        overlay=True,
+        control=False,
+        show=True
     ).add_to(m)
-    
-    folium.TileLayer(
-        tiles='https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png',
-        attr='Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors, &copy; <a href="https://cartodb.com/attributions">CartoDB</a>',
-        name='CartoDB Light',
-        control=True
-    ).add_to(m)
+
+    if len(all_coords) >= 2:
+        m.fit_bounds(all_coords, padding=(40, 40))
 
     # Colores para cada vehículo
     colors = [
@@ -663,8 +689,8 @@ def create_map_visualization(routes, data, output_file="rutas_twcvrp_mapa.html")
           try {{
             return (str || '')
               .normalize('NFD')
-              .replace(/[\u0300-\u036f]/g, '')
-              .replace(/\s+/g, ' ')
+              .replace(/[\\u0300-\\u036f]/g, '')
+              .replace(/\\s+/g, ' ')
               .trim()
               .toLowerCase();
           }} catch (e) {{
@@ -683,7 +709,7 @@ def create_map_visualization(routes, data, output_file="rutas_twcvrp_mapa.html")
             // Ensure the label is for vehicle overlays. Accept both 'Vehiculo' and 'Vehículo'
             if (text.indexOf('vehiculo') === -1) return;
             // Extract the last number in the label text as vehicle id
-             var m = (label.textContent || '').match(/(\d+)(?!.*\d)/);
+             var m = (label.textContent || '').match(/(\\d+)(?!.*\\d)/);
             if (!m) return;
             var id = parseInt(m[1], 10);
             if (!isNaN(id)) {{ idToCheckbox[id] = input; }}

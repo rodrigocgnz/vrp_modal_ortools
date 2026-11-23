@@ -359,11 +359,19 @@ def main() -> None:
     try:
         time_matrix, distance_matrix, df_valid = generar_matrices_osrm_local(df, base_url=args.osrm_url)
     except requests.exceptions.ConnectionError:
-        logging.error(
-            f"No se pudo conectar a OSRM local en '{args.osrm_url}'. "
-            "Asegúrate de que Docker Desktop esté abierto y de haber ejecutado '.\\setup_osrm.ps1' o 'docker compose up -d'."
+        logging.warning(
+            f"OSRM local no está activo en '{args.osrm_url}'. "
+            "Iniciando contenedor OSRM automáticamente mediante 'setup_osrm.ps1'..."
         )
-        raise SystemExit(1)
+        import subprocess
+        setup_res = subprocess.run(
+            ["powershell", "-ExecutionPolicy", "Bypass", "-File", "setup_osrm.ps1"],
+            check=False,
+        )
+        if setup_res.returncode != 0:
+            logging.error("No se pudo iniciar OSRM automáticamente con 'setup_osrm.ps1'.")
+            raise SystemExit(1)
+        time_matrix, distance_matrix, df_valid = generar_matrices_osrm_local(df, base_url=args.osrm_url)
 
     if time_matrix is None or distance_matrix is None or df_valid is None:
         logging.error("Falló la generación de matrices con OSRM local.")

@@ -2,8 +2,11 @@ import argparse
 import datetime
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import webbrowser
+from pathlib import Path
 from typing import Optional
 
 from src.data_loader import create_data_model
@@ -130,6 +133,17 @@ def run_solver(data: dict, output_dir: str) -> None:
     # Exportar resultados
     export_results(routes, data, export_filename)
     create_map_visualization(routes, data, map_filename)
+
+    # Guardar también una copia fija en results/rutas_twcvrp_mapa.html y abrir en el navegador
+    latest_map_path = os.path.join("results", "rutas_twcvrp_mapa.html")
+    if os.path.exists(map_filename):
+        shutil.copyfile(map_filename, latest_map_path)
+        try:
+            map_uri = Path(map_filename).resolve().as_uri()
+            logging.info(f"Abriendo mapa en el navegador: {map_uri}")
+            webbrowser.open(map_uri)
+        except Exception as e:
+            logging.warning(f"No se pudo abrir el navegador automáticamente: {e}")
 
     # Resumen final
     print_summary(routes, data, output_dir, map_filename, export_filename)
