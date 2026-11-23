@@ -1,3 +1,3 @@
 ID,ID_Viaje,Tipo_Servicio,Nombre,Latitud,Longitud,Horario_Inicio,Horario_Fin,Demanda
-0,0,NaN,Depósito,20.967073,-89.623739,07:00,23:00,0
+0,0,,Depósito,20.967073,-89.623739,07:00,23:00,0
 1,1,Entrega,SYD,20.912135,-89.702568,08:00,23:00,5

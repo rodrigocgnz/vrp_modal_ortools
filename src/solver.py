@@ -291,18 +291,31 @@ class VRPSolver:
 
     def _calculate_dynamic_time_limit(self) -> int:
         """Calcula tiempo límite basado en complejidad del problema."""
+        if "search_time_limit" in self.data and self.data["search_time_limit"]:
+            custom_limit = max(1, int(self.data["search_time_limit"]))
+            logger.info(f"Tiempo límite configurado: {custom_limit}s")
+            return custom_limit
+
         num_locations = len(self.data.get("time_matrix", []))
         num_vehicles = self.data.get("num_vehicles", 1)
 
-        base_time = self.config.search_time_limit
-        additional_time = num_locations * self.config.time_limit_per_location
+        if num_locations <= 10:
+            total_time = 2
+            logger.info(f"Tiempo límite rápido: {total_time}s para {num_locations} ubicaciones")
+            return total_time
+        elif num_locations <= 25:
+            base_time = 5
+            additional_time = num_locations * 1
+        else:
+            base_time = self.config.search_time_limit
+            additional_time = num_locations * self.config.time_limit_per_location
 
         if self.problem_type == "PDP":
             additional_time = int(additional_time * 1.5)
 
         vehicle_factor = 1 + (num_vehicles - 1) * 0.1
         total_time = int((base_time + additional_time) * vehicle_factor)
-        total_time = max(self.config.min_search_time, min(total_time, self.config.max_search_time))
+        total_time = max(2, min(total_time, self.config.max_search_time))
 
         logger.info(f"Tiempo límite: {total_time}s para {num_locations} ubicaciones")
         return total_time

@@ -132,7 +132,15 @@ def run_solver(data: dict, output_dir: str) -> None:
 
     # Exportar resultados
     export_results(routes, data, export_filename)
-    create_map_visualization(routes, data, map_filename)
+    initial_report = None
+    if os.path.exists(export_filename):
+        try:
+            import json
+            with open(export_filename, "r", encoding="utf-8") as f:
+                initial_report = json.load(f)
+        except Exception:
+            pass
+    create_map_visualization(routes, data, map_filename, initial_report=initial_report)
 
     # Guardar también una copia fija en results/rutas_twcvrp_mapa.html y abrir en el navegador
     latest_map_path = os.path.join("results", "rutas_twcvrp_mapa.html")
