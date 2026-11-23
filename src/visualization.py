@@ -369,6 +369,10 @@ def create_map_visualization(
         "depot_return_required": (data or {}).get("depot_return_required", True),
         "problem_type": (data or {}).get("problem_type", "AUTO"),
         "service": "osrm",
+        "cost_per_km": (data or {}).get("cost_per_km", 3.24),
+        "driver_cost_per_hour": (data or {}).get("driver_cost_per_hour", 81.25),
+        "fixed_cost_per_vehicle": (data or {}).get("fixed_cost_per_vehicle", 34.38),
+        "currency": (data or {}).get("currency", "MXN"),
     }
     if initial_config:
         default_config.update(initial_config)
@@ -556,9 +560,9 @@ def create_map_visualization(
     /* Pestañas */
     .vrp-tabs {{
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      padding: 6px 14px 0;
-      gap: 6px;
+      grid-template-columns: 1fr 1fr 1fr;
+      padding: 6px 12px 0;
+      gap: 4px;
       border-bottom: 1px solid var(--border-light);
       background: rgba(248, 250, 252, 0.7);
     }}
@@ -567,8 +571,8 @@ def create_map_visualization(
       appearance: none;
       border: none;
       background: transparent;
-      padding: 9px 10px;
-      font-size: 12.5px;
+      padding: 9px 6px;
+      font-size: 12px;
       font-weight: 600;
       color: var(--text-muted);
       cursor: pointer;
@@ -576,7 +580,7 @@ def create_map_visualization(
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 5px;
       transition: color 150ms ease, border-color 150ms ease;
     }}
     .vrp-tab-btn:hover {{
@@ -1362,6 +1366,9 @@ def create_map_visualization(
       <button class="vrp-tab-btn" data-tab="tab-config">
         <i class="fa fa-sliders"></i> Opciones
       </button>
+      <button class="vrp-tab-btn" data-tab="tab-costs">
+        <i class="fa fa-coins"></i> Costos
+      </button>
     </div>
 
     <div class="vrp-panel-body">
@@ -1559,6 +1566,133 @@ def create_map_visualization(
           </div>
         </div>
       </div>
+
+      <!-- PESTAÑA 3: GESTIÓN DE COSTOS OPERATIVOS -->
+      <div id="tab-costs" class="vrp-tab-pane">
+        <div class="vrp-form-card open" style="display:block;">
+          <div class="vrp-form-header">
+            <span>Tarifas Operativas</span>
+            <button id="btn-reset-costs" class="vrp-icon-btn" style="font-size:11px;padding:2px 6px;color:var(--primary);" title="Restaurar costos por defecto del proyecto">
+              <i class="fa fa-rotate-left"></i> Por defecto
+            </button>
+          </div>
+
+          <div class="vrp-grid-2">
+            <div class="vrp-field">
+              <label for="cfg-cost-km">Costo por km (Combustible/Mant.)</label>
+              <input id="cfg-cost-km" type="number" min="0" step="0.01" class="vrp-input" value="3.24" />
+            </div>
+            <div class="vrp-field">
+              <label for="cfg-cost-hour">Costo por hora (Conductor)</label>
+              <input id="cfg-cost-hour" type="number" min="0" step="0.01" class="vrp-input" value="81.25" />
+            </div>
+          </div>
+
+          <div class="vrp-grid-2" style="margin-bottom:6px;">
+            <div class="vrp-field">
+              <label for="cfg-cost-fixed">Costo fijo por vehículo</label>
+              <input id="cfg-cost-fixed" type="number" min="0" step="0.01" class="vrp-input" value="34.38" />
+            </div>
+            <div class="vrp-field">
+              <label for="cfg-currency">Moneda</label>
+              <select id="cfg-currency" class="vrp-select">
+                <option value="MXN">MXN ($)</option>
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Calculadora rápida de combustible por rendimiento -->
+          <div style="border-top:1px dashed var(--border-light);padding-top:7px;margin-top:4px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:11px;font-weight:600;color:var(--text-muted);">
+                <i class="fa fa-gas-pump"></i> Calcular costo/km por combustible
+              </span>
+              <button id="btn-toggle-fuel-calc" class="vrp-icon-btn" style="font-size:11px;padding:2px 6px;color:var(--primary);">
+                Abrir
+              </button>
+            </div>
+            <div id="fuel-calc-box" style="display:none;margin-top:7px;">
+              <div class="vrp-grid-3">
+                <div class="vrp-field">
+                  <label for="fuel-price-liter">Precio / L</label>
+                  <input id="fuel-price-liter" type="number" min="0" step="0.1" class="vrp-input" value="24.50" />
+                </div>
+                <div class="vrp-field">
+                  <label for="fuel-km-liter">Rend. (km/L)</label>
+                  <input id="fuel-km-liter" type="number" min="0.1" step="0.1" class="vrp-input" value="8.5" />
+                </div>
+                <div class="vrp-field">
+                  <label for="fuel-maint-km">Mant. / km</label>
+                  <input id="fuel-maint-km" type="number" min="0" step="0.05" class="vrp-input" value="0.36" />
+                </div>
+              </div>
+              <button id="btn-apply-fuel-calc" class="vrp-btn" style="width:100%;padding:5px 8px;font-size:11px;background:var(--primary-soft);color:var(--primary);border-color:#bfdbfe;">
+                <i class="fa fa-calculator"></i> Aplicar al Costo por km
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Desglose financiero en tiempo real -->
+        <div class="vrp-form-card open" style="display:block;margin-bottom:0;">
+          <div class="vrp-form-header">
+            <span>Resumen Financiero de Rutas</span>
+            <span id="cost-live-total" style="font-size:13.5px;font-weight:700;color:var(--primary);">$0.00</span>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:2px;">
+                <span style="color:var(--text-muted);"><i class="fa fa-road"></i> Combustible y Mant. (<span id="cost-lbl-km">0 km</span>)</span>
+                <b id="cost-val-fuel">$0.00</b>
+              </div>
+              <div class="vrp-cap-progress" style="margin-top:2px;">
+                <div id="cost-bar-fuel" class="vrp-cap-fill" style="width:0%;background:#2563eb;"></div>
+              </div>
+            </div>
+
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:2px;">
+                <span style="color:var(--text-muted);"><i class="fa fa-id-card"></i> Conductores (<span id="cost-lbl-hours">0 h</span>)</span>
+                <b id="cost-val-driver">$0.00</b>
+              </div>
+              <div class="vrp-cap-progress" style="margin-top:2px;">
+                <div id="cost-bar-driver" class="vrp-cap-fill" style="width:0%;background:#ea580c;"></div>
+              </div>
+            </div>
+
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:2px;">
+                <span style="color:var(--text-muted);"><i class="fa fa-truck"></i> Costo Fijo (<span id="cost-lbl-vehs">0 veh</span>)</span>
+                <b id="cost-val-fixed">$0.00</b>
+              </div>
+              <div class="vrp-cap-progress" style="margin-top:2px;">
+                <div id="cost-bar-fixed" class="vrp-cap-fill" style="width:0%;background:#16a34a;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="vrp-grid-3" style="margin-bottom:8px;">
+            <div class="vrp-kpi-box" style="padding:5px 7px;">
+              <div class="vrp-kpi-label">Costo / Parada</div>
+              <div id="cost-unit-stop" class="vrp-kpi-val" style="font-size:12px;">$0.00</div>
+            </div>
+            <div class="vrp-kpi-box" style="padding:5px 7px;">
+              <div class="vrp-kpi-label">Costo / Unidad</div>
+              <div id="cost-unit-load" class="vrp-kpi-val" style="font-size:12px;">$0.00</div>
+            </div>
+            <div class="vrp-kpi-box" style="padding:5px 7px;">
+              <div class="vrp-kpi-label">Costo / km</div>
+              <div id="cost-unit-km" class="vrp-kpi-val" style="font-size:12px;">$0.00</div>
+            </div>
+          </div>
+
+          <div class="twcvrp-section-title" style="margin:6px 0 4px;">Costo por Vehículo</div>
+          <div id="cost-per-vehicle-list" style="display:flex;flex-direction:column;gap:4px;max-height:115px;overflow-y:auto;"></div>
+        </div>
+      </div>
     </div>
 
     <div class="vrp-panel-footer">
@@ -1747,7 +1881,7 @@ def create_map_visualization(
 
     document.getElementById('btn-fit-bounds').addEventListener('click', fitMapToLocations);
 
-    // ================= CONFIGURACIÓN Y CAPACIDAD =================
+    // ================= CONFIGURACIÓN, CAPACIDAD Y COSTOS =================
     function syncConfigToInputs() {{
       document.getElementById('cfg-num-vehicles').value = CONFIG.num_vehicles ?? 5;
       document.getElementById('cfg-vehicle-capacity').value = CONFIG.vehicle_capacity ?? 10;
@@ -1756,7 +1890,12 @@ def create_map_visualization(
       document.getElementById('cfg-problem-type').value = CONFIG.problem_type || 'AUTO';
       document.getElementById('cfg-service').value = CONFIG.service || 'osrm';
       document.getElementById('cfg-depot-return').checked = CONFIG.depot_return_required !== false;
+      document.getElementById('cfg-cost-km').value = CONFIG.cost_per_km ?? 3.24;
+      document.getElementById('cfg-cost-hour').value = CONFIG.driver_cost_per_hour ?? 81.25;
+      document.getElementById('cfg-cost-fixed').value = CONFIG.fixed_cost_per_vehicle ?? 34.38;
+      document.getElementById('cfg-currency').value = CONFIG.currency || 'MXN';
       updateCapacityIndicator();
+      recalculateAndRenderCosts();
     }}
 
     function readConfigFromInputs() {{
@@ -1768,9 +1907,153 @@ def create_map_visualization(
         max_time_per_vehicle: CONFIG.max_time_per_vehicle || 90000,
         depot_return_required: document.getElementById('cfg-depot-return').checked,
         problem_type: document.getElementById('cfg-problem-type').value,
-        service: document.getElementById('cfg-service').value
+        service: document.getElementById('cfg-service').value,
+        cost_per_km: Math.max(0, parseFloat(document.getElementById('cfg-cost-km').value) || 0),
+        driver_cost_per_hour: Math.max(0, parseFloat(document.getElementById('cfg-cost-hour').value) || 0),
+        fixed_cost_per_vehicle: Math.max(0, parseFloat(document.getElementById('cfg-cost-fixed').value) || 0),
+        currency: document.getElementById('cfg-currency').value || 'MXN'
       }};
     }}
+
+    function formatMoney(amount, currencyCode) {{
+      const code = currencyCode || document.getElementById('cfg-currency').value || 'MXN';
+      const symbol = code === 'EUR' ? '€' : '$';
+      return `${{symbol}}${{Number(amount || 0).toLocaleString('es-MX', {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }})}} ${{code}}`;
+    }}
+
+    function recalculateAndRenderCosts() {{
+      const cfg = readConfigFromInputs();
+      CONFIG.cost_per_km = cfg.cost_per_km;
+      CONFIG.driver_cost_per_hour = cfg.driver_cost_per_hour;
+      CONFIG.fixed_cost_per_vehicle = cfg.fixed_cost_per_vehicle;
+      CONFIG.currency = cfg.currency;
+
+      const routes = (MAP_DATA && MAP_DATA.routes) ? MAP_DATA.routes : [];
+      const sumReport = (REPORT && REPORT.summary) ? REPORT.summary : null;
+
+      let totalDistKm = 0;
+      let totalTimeMin = 0;
+      let totalLoad = 0;
+      let totalStops = 0;
+
+      if (routes.length > 0) {{
+        routes.forEach(r => {{
+          const rDist = (r.total_distance_km !== undefined && r.total_distance_km !== '')
+            ? Number(r.total_distance_km)
+            : 0;
+          let rMin = r.total_time_min;
+          if (rMin === undefined && r.total_time_str) {{
+            const p = String(r.total_time_str).split(':').map(Number);
+            rMin = (p[0] || 0) * 60 + (p[1] || 0);
+          }}
+          totalDistKm += rDist;
+          totalTimeMin += (rMin || 0);
+          totalLoad += (Number(r.total_load) || 0);
+          totalStops += (r.stops ? r.stops.length : 0);
+        }});
+        if (totalDistKm === 0 && sumReport && sumReport.total_distance_km) {{
+          totalDistKm = Number(sumReport.total_distance_km);
+        }}
+      }} else if (sumReport) {{
+        totalDistKm = Number(sumReport.total_distance_km || 0);
+        totalTimeMin = Number(sumReport.total_time_minutes || 0);
+        totalStops = Number(sumReport.total_stops_served || 0);
+      }}
+
+      const numVehUsed = routes.length || (sumReport ? Number(sumReport.total_vehicles_used || 0) : 0);
+      const fuelCost = totalDistKm * cfg.cost_per_km;
+      const driverCost = (totalTimeMin / 60) * cfg.driver_cost_per_hour;
+      const fixedCost = numVehUsed * cfg.fixed_cost_per_vehicle;
+      const totalCost = fuelCost + driverCost + fixedCost;
+
+      const sym = cfg.currency === 'EUR' ? '€' : '$';
+      const fmtShort = (v) => `${{sym}}${{Number(v || 0).toLocaleString('es-MX', {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }})}}`;
+
+      document.getElementById('cost-live-total').textContent = formatMoney(totalCost, cfg.currency);
+      document.getElementById('cost-lbl-km').textContent = `${{totalDistKm.toFixed(2)}} km`;
+      document.getElementById('cost-lbl-hours').textContent = `${{(totalTimeMin / 60).toFixed(2)}} h`;
+      document.getElementById('cost-lbl-vehs').textContent = `${{numVehUsed}} veh`;
+
+      document.getElementById('cost-val-fuel').textContent = fmtShort(fuelCost);
+      document.getElementById('cost-val-driver').textContent = fmtShort(driverCost);
+      document.getElementById('cost-val-fixed').textContent = fmtShort(fixedCost);
+
+      const pFuel = totalCost > 0 ? Math.round((fuelCost / totalCost) * 100) : 0;
+      const pDriver = totalCost > 0 ? Math.round((driverCost / totalCost) * 100) : 0;
+      const pFixed = totalCost > 0 ? Math.round((fixedCost / totalCost) * 100) : 0;
+
+      document.getElementById('cost-bar-fuel').style.width = `${{pFuel}}%`;
+      document.getElementById('cost-bar-driver').style.width = `${{pDriver}}%`;
+      document.getElementById('cost-bar-fixed').style.width = `${{pFixed}}%`;
+
+      document.getElementById('cost-unit-stop').textContent = totalStops > 0 ? fmtShort(totalCost / totalStops) : `${{sym}}0.00`;
+      document.getElementById('cost-unit-load').textContent = totalLoad > 0 ? fmtShort(totalCost / totalLoad) : `${{sym}}0.00`;
+      document.getElementById('cost-unit-km').textContent = totalDistKm > 0 ? fmtShort(totalCost / totalDistKm) : `${{sym}}0.00`;
+
+      // Actualizar KPI en panel derecho
+      const kpiCostEl = document.getElementById('kpi-cost');
+      if (kpiCostEl) kpiCostEl.textContent = fmtShort(totalCost);
+
+      // Desglose por vehículo
+      const vehListEl = document.getElementById('cost-per-vehicle-list');
+      vehListEl.innerHTML = '';
+      if (!routes.length) {{
+        vehListEl.innerHTML = '<span style="font-size:11px;color:var(--text-muted);">Calcula las rutas para ver el costo por vehículo.</span>';
+      }} else {{
+        routes.forEach(r => {{
+          const rDist = Number(r.total_distance_km || 0);
+          let rMin = r.total_time_min;
+          if (rMin === undefined && r.total_time_str) {{
+            const p = String(r.total_time_str).split(':').map(Number);
+            rMin = (p[0] || 0) * 60 + (p[1] || 0);
+          }}
+          const rCost = (rDist * cfg.cost_per_km) + (((rMin || 0) / 60) * cfg.driver_cost_per_hour) + cfg.fixed_cost_per_vehicle;
+          r.calculated_cost = rCost;
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:5px 8px;background:#fff;border:1px solid var(--border-light);border-radius:7px;font-size:11.5px;';
+          row.innerHTML = `
+            <span style="display:flex;align-items:center;gap:6px;font-weight:600;">
+              <span class="twcvrp-dot" style="background:${{r.color}};width:10px;height:10px;"></span>
+              Vehículo ${{r.display_id}}
+              <span style="color:var(--text-muted);font-weight:400;">(${{rDist.toFixed(1)}} km • ${{r.total_time_str}})</span>
+            </span>
+            <b>${{fmtShort(rCost)}}</b>
+          `;
+          vehListEl.appendChild(row);
+        }});
+      }}
+    }}
+
+    ['cfg-cost-km', 'cfg-cost-hour', 'cfg-cost-fixed', 'cfg-currency'].forEach(id => {{
+      document.getElementById(id).addEventListener('input', recalculateAndRenderCosts);
+      document.getElementById(id).addEventListener('change', recalculateAndRenderCosts);
+    }});
+
+    document.getElementById('btn-reset-costs').addEventListener('click', () => {{
+      document.getElementById('cfg-cost-km').value = '3.24';
+      document.getElementById('cfg-cost-hour').value = '81.25';
+      document.getElementById('cfg-cost-fixed').value = '34.38';
+      document.getElementById('cfg-currency').value = 'MXN';
+      recalculateAndRenderCosts();
+      setStatus('Tarifas restauradas a los valores base del proyecto.', 'success');
+    }});
+
+    document.getElementById('btn-toggle-fuel-calc').addEventListener('click', function() {{
+      const box = document.getElementById('fuel-calc-box');
+      const isOpen = box.style.display === 'block';
+      box.style.display = isOpen ? 'none' : 'block';
+      this.textContent = isOpen ? 'Abrir' : 'Cerrar';
+    }});
+
+    document.getElementById('btn-apply-fuel-calc').addEventListener('click', () => {{
+      const priceL = parseFloat(document.getElementById('fuel-price-liter').value) || 0;
+      const kmL = Math.max(0.1, parseFloat(document.getElementById('fuel-km-liter').value) || 1);
+      const maintKm = parseFloat(document.getElementById('fuel-maint-km').value) || 0;
+      const computedKmCost = Number(((priceL / kmL) + maintKm).toFixed(2));
+      document.getElementById('cfg-cost-km').value = computedKmCost;
+      recalculateAndRenderCosts();
+      setStatus(`Costo por km actualizado a ${{computedKmCost}} según rendimiento.`, 'success');
+    }});
 
     function updateCapacityIndicator() {{
       const cfg = readConfigFromInputs();
@@ -2004,9 +2287,16 @@ def create_map_visualization(
     function buildRoutePopupHtml(props) {{
       const vid = props.vehicle_id;
       const color = props.color || '#2563EB';
-      const distStr = props.total_distance_km !== undefined && Number(props.total_distance_km) > 0
-        ? `<span style="color:#64748b;">Distancia:</span> <b>${{props.total_distance_km}} km</b><br>`
+      const cfg = readConfigFromInputs();
+      const sym = cfg.currency === 'EUR' ? '€' : '$';
+      const distNum = Number(props.total_distance_km || 0);
+      const distStr = distNum > 0
+        ? `<span style="color:#64748b;">Distancia:</span> <b>${{distNum.toFixed(2)}} km</b><br>`
         : '';
+      const timeParts = String(props.total_time || '00:00').split(':').map(Number);
+      const timeMin = (timeParts[0] || 0) * 60 + (timeParts[1] || 0);
+      const routeCost = (distNum * cfg.cost_per_km) + ((timeMin / 60) * cfg.driver_cost_per_hour) + cfg.fixed_cost_per_vehicle;
+      const costStr = `<span style="color:#64748b;">Costo ruta:</span> <b>${{sym}}${{routeCost.toLocaleString('es-MX', {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }})}} ${{cfg.currency}}</b><br>`;
       const capStr = props.vehicle_capacity
         ? `${{props.total_load}} / ${{props.vehicle_capacity}}`
         : `${{props.total_load}}`;
@@ -2025,7 +2315,8 @@ def create_map_visualization(
           <span style="color:#64748b;">Paradas asignadas:</span> <b>${{props.num_stops}}</b><br>
           <span style="color:#64748b;">Tiempo total:</span> <b>${{props.total_time}} h</b><br>
           ${{distStr}}
-          <span style="color:#64748b;">Carga transportada:</span> <b>${{capStr}}</b>
+          <span style="color:#64748b;">Carga transportada:</span> <b>${{capStr}}</b><br>
+          ${{costStr}}
           ${{stopsListStr}}
         </div>
       `;
@@ -2676,6 +2967,7 @@ def create_map_visualization(
 
       renderPointsList();
       renderMapMarkers();
+      recalculateAndRenderCosts();
 
       if (shouldFitBounds) {{
         fitMapToLocations();
@@ -2914,7 +3206,7 @@ def create_map_visualization(
         }}
       }}
 
-      const totalCost = (totalDistKm * 3.24) + ((totalTimeMin / 60) * 81.25) + (routesOut.length * 34.38);
+      const totalCost = (totalDistKm * cfg.cost_per_km) + ((totalTimeMin / 60) * cfg.driver_cost_per_hour) + (routesOut.length * cfg.fixed_cost_per_vehicle);
       MAP_DATA = {{
         center: [Number(depot.Longitud), Number(depot.Latitud)],
         depot: {{ name: depot.Nombre, lat: Number(depot.Latitud), lon: Number(depot.Longitud) }},

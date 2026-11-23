@@ -172,9 +172,14 @@ def export_results(routes, data, filename="resultados_rutas_detallados.json"):
         
         # Add more calculations here if needed
 
-    total_fuel_maintenance_cost = total_distance * COSTO_POR_KM
-    total_driver_cost = (total_time / 60) * COSTO_POR_HORA_CONDUCTOR
-    total_vehicle_fixed_cost = len(routes) * COSTO_FIJO_VEHICULO
+    cost_per_km = float(data.get("cost_per_km", COSTO_POR_KM))
+    driver_cost_per_hour = float(data.get("driver_cost_per_hour", COSTO_POR_HORA_CONDUCTOR))
+    fixed_cost_per_vehicle = float(data.get("fixed_cost_per_vehicle", COSTO_FIJO_VEHICULO))
+    currency = str(data.get("currency", "MXN"))
+
+    total_fuel_maintenance_cost = total_distance * cost_per_km
+    total_driver_cost = (total_time / 60) * driver_cost_per_hour
+    total_vehicle_fixed_cost = len(routes) * fixed_cost_per_vehicle
     total_cost = total_fuel_maintenance_cost + total_driver_cost + total_vehicle_fixed_cost
 
     results = {
@@ -189,6 +194,12 @@ def export_results(routes, data, filename="resultados_rutas_detallados.json"):
                 "fuel_maintenance_cost": round(total_fuel_maintenance_cost, 2),
                 "driver_cost": round(total_driver_cost, 2),
                 "vehicle_fixed_cost": round(total_vehicle_fixed_cost, 2),
+                "currency": currency,
+                "rates": {
+                    "cost_per_km": cost_per_km,
+                    "driver_cost_per_hour": driver_cost_per_hour,
+                    "fixed_cost_per_vehicle": fixed_cost_per_vehicle,
+                },
             }
         },
         "detailed_routes": [],
@@ -219,9 +230,9 @@ def export_results(routes, data, filename="resultados_rutas_detallados.json"):
         route_load_per_stop = route["total_load"] / num_real_stops if num_real_stops > 0 else 0
         
         # Análisis de costos por ruta
-        fuel_maintenance_cost = route_distance * COSTO_POR_KM
-        driver_cost = (route["total_time"] / 60) * COSTO_POR_HORA_CONDUCTOR
-        vehicle_fixed_cost = COSTO_FIJO_VEHICULO
+        fuel_maintenance_cost = route_distance * cost_per_km
+        driver_cost = (route["total_time"] / 60) * driver_cost_per_hour
+        vehicle_fixed_cost = fixed_cost_per_vehicle
         total_route_cost = fuel_maintenance_cost + driver_cost + vehicle_fixed_cost
         
         # Determinar tipo de parada para PDP

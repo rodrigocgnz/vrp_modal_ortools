@@ -72,6 +72,10 @@ class SolveConfig(BaseModel):
     depot_return_required: bool = True
     problem_type: str = "AUTO"  # AUTO, CVRPTW, CVRP, PDP
     service: str = "osrm"  # osrm, here, ors
+    cost_per_km: float = Field(default=3.24, ge=0.0)
+    driver_cost_per_hour: float = Field(default=81.25, ge=0.0)
+    fixed_cost_per_vehicle: float = Field(default=34.38, ge=0.0)
+    currency: str = "MXN"
 
 
 class SolveRequest(BaseModel):
@@ -163,6 +167,10 @@ def _load_current_config() -> Dict[str, Any]:
         "depot_return_required": True,
         "problem_type": "AUTO",
         "service": "osrm",
+        "cost_per_km": 3.24,
+        "driver_cost_per_hour": 81.25,
+        "fixed_cost_per_vehicle": 34.38,
+        "currency": "MXN",
     }
     if CONFIG_JSON_PATH.exists():
         try:
@@ -179,7 +187,7 @@ async def index():
     """Sirve la interfaz principal del mapa 3D con el side panel integrado."""
     if LATEST_MAP_PATH.exists():
         html_text = LATEST_MAP_PATH.read_text(encoding="utf-8")
-        if "buildRoutePopupHtml" in html_text and "vrp-points-source" in html_text:
+        if "tab-costs" in html_text and "buildRoutePopupHtml" in html_text:
             return HTMLResponse(content=html_text)
 
     locations = _load_current_csv_locations()
@@ -340,6 +348,10 @@ async def solve_endpoint(req: SolveRequest):
         "max_wait_time": req.config.max_wait_time,
         "max_time_per_vehicle": req.config.max_time_per_vehicle,
         "depot_return_required": req.config.depot_return_required,
+        "cost_per_km": req.config.cost_per_km,
+        "driver_cost_per_hour": req.config.driver_cost_per_hour,
+        "fixed_cost_per_vehicle": req.config.fixed_cost_per_vehicle,
+        "currency": req.config.currency,
     }
     if req.config.problem_type and req.config.problem_type.upper() != "AUTO":
         config_dict["problem_type"] = req.config.problem_type.upper()
@@ -413,6 +425,11 @@ async def solve_endpoint(req: SolveRequest):
 
     # 2. Validar capacidad total vs demanda antes de llamar a create_data_model
     data = create_data_model(str(MATRICES_JSON_PATH))
+    if data is not None:
+        data["cost_per_km"] = req.config.cost_per_km
+        data["driver_cost_per_hour"] = req.config.driver_cost_per_hour
+        data["fixed_cost_per_vehicle"] = req.config.fixed_cost_per_vehicle
+        data["currency"] = req.config.currency
     if data is None:
         total_demand = sum(
             int(loc.Demanda) for idx, loc in enumerate(req.locations) if idx != 0 and loc.ID != 0
